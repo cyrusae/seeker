@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block content %}
+<form method="get" action="/" style="max-width: 16rem;">
+  <label>Applicant:
+    <select name="applicant" onchange="this.form.submit()">
+      <option value="">all</option>
+      {% for a in applicants %}
+      <option value="{{ a }}" {% if a == selected %}selected{% endif %}>{{ a }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</form>
+<p class="meta" style="display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap;">
+  <span>queue: {{ counts.get('pending_eval', 0) }} awaiting eval ·
+  {{ counts.get('pending_user_review', 0) }} for review ·
+  <a href="/jobs?status=skipped">{{ counts.get('skipped', 0) }} auto-skipped</a> ·
+  <a href="/jobs?status=filtered">{{ counts.get('filtered', 0) }} keyword-filtered</a> ·
+  <a href="/drafts?tab=shortlist">{{ counts.get('shortlisted', 0) }} shortlisted</a> ·
+  {{ counts.get('draft_created', 0) }} drafted ·
+  <a href="/usage">{{ counts.get('error', 0) }} errors</a></span>
+</p>
+{% if counts.get('pending_user_review', 0) or counts.get('skipped', 0) or counts.get('filtered', 0) %}
+<details style="margin-bottom: 0.8rem;">
+  <summary class="meta" style="cursor: pointer;">re-score against updated profiles…</summary>
+  <form method="post" action="/rescore" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.4rem;"
+        onsubmit="return confirm('Re-score unreviewed jobs for ' + (event.submitter.value || 'everyone') + ' against their current profile? This re-runs evals (costs tokens).')">
+    {% if selected %}
+    <button class="subtle" name="applicant" value="{{ selected }}">Re-score {{ selected }}</button>
+    {% else %}
+    {% for a in applicants %}
+    <button class="subtle" name="applicant" value="{{ a }}">Re-score {{ a }}</button>
+    {% endfor %}
+    <button class="subtle" name="applicant" value="">Re-score everyone</button>
+    {% endif %}
+    <label style="font-weight: 400;"><input type="checkbox" name="include_skipped" value="1">
+      include auto-skipped</label>
+    <label style="font-weight: 400;"><input type="checkbox" name="include_filtered" value="1">
+      include keyword-filtered</label>
+  </form>
+</details>
+{% endif %}
+
+{% for j in jobs %}
+{% set s = j['score'] or 0 %}
+<div class="card">
+  <span class="score {{ 'score-hi' if s >= 75 else 'score-mid' if s >= 55 else 'score-lo' }}">{{ s }}</span>
+  {% set reasons = {'absent': 'no longer listed on its job board', '404': 'posting URL returns 404 (removed)', '410': 'posting URL returns 410 (removed)', 'expired-text': 'the posting page says it is closed/filled', 'manual': 'you marked this posting gone'} %}
+  <h3>{{ j['title'] }} — {{ j['company'] or '?' }}
+    {% if j['closed_at'] %}<span title="likely closed — {{ reasons.get(j['closed_reason'], 'no longer available') }} (as of {{ j['closed_at'] }})" style="font-size: 0.7em; font-weight: 600; color: #c0392b; border: 1px solid currentColor; border-radius: 3px; padding: 0 0.3em; vertical-align: middle;">✖ likely closed</span>{% endif %}
+  </h3>
+  <div class="meta">
+    {{ j['applicant_id'] }} · {{ j['location'] or '?' }}
+    {% if j['salary'] %} · {{ j['salary'] | money }}{% endif %}
+    · via {{ j['source'] }}{% if j['escalated'] %} · <span class="badge">escalated</span>{% endif %}
+    {% if j['scam_risk'] and j['scam_risk'] != 'none' %}
+      · <span class="scam-{{ j['scam_risk'] }}">⚠ scam risk: {{ j['scam_risk'] }}</span>
+    {% endif %}
+  </div>
+  {% if j['similar_to'] %}
+  <p class="meta" style="color: var(--warn);">⚠ similar listing already ingested:
+    “{{ j['similar_title'] or j['similar_to'] }}”
+    (currently {{ (j['similar_status'] or '?').replace('_', ' ') }}) —
+    possibly two openings, or the same job worded differently.</p>
+  {% endif %}
+  <p class="pitch"><strong>Why:</strong> {{ j['pitch'] }}</p>
+  <p class="concerns"><strong>Concerns:</strong> {{ j['concerns'] }}</p>
+  {% if j['description'] %}
+  <details class="posting"><summary>full posting text</summary>
+    <div class="desc" id="rdesc-{{ j['id'] }}">{{ j['description'] }}</div>
+  </details>
+  {% endif %}
+  <input type="text" name="note" id="note-{{ j['id'] }}" form="ap-{{ j['id'] }}"
+         value="{{ j['notes'] or '' }}"
+         placeholder="optional note to future-you — context the eval missed, kept with the job for scaffolding/drafting later"
+         style="width: 100%; margin: 0.3rem 0;">
+  <div class="actions">
+    <form method="post" action="/jobs/{{ j['id'] }}/shortlist"
+          onsubmit="this.note.value = document.getElementById('note-{{ j['id'] }}').value">
+      <input type="hidden" name="note" value="">
+      <button class="approve" title="good match — parks it on the Applications shortlist to work from">Shortlist ★</button>
+    </form>
+    {% if j['url'] %}<a class="btn" href="{{ j['url'] }}" target="_blank">Posting ↗</a>{% endif %}
+    {% if j['description'] %}
+    <button type="button" onclick="copyListing(this, 'rdesc-{{ j['id'] }}')"
+            title="copy title + full posting text, for pasting into a chat session">Copy listing</button>
+    {% endif %}
+    <form method="post" action="/jobs/{{ j['id'] }}/reject" style="flex: 1; display: flex; gap: 0.5rem; min-width: 15rem;">
+      <input type="text" name="feedback" placeholder="why not? (feeds profile tuning)">
+      <button class="reject">Reject</button>
+    </form>
+  </div>
+  <div class="actions" style="margin-top: 0.35rem;">
+    <form method="post" action="/jobs/{{ j['id'] }}/applied"
+          onsubmit="this.note.value = document.getElementById('note-{{ j['id'] }}').value">
+      <input type="hidden" name="note" value="">
+      <button class="subtle" title="applied outside the pipeline (reused a resume, drafted elsewhere) — records a positive signal, no LLM call">applied elsewhere ✓</button>
+    </form>
+    <form method="post" action="/jobs/{{ j['id'] }}/scaffold"
+          onsubmit="this.note.value = document.getElementById('note-{{ j['id'] }}').value">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="/">
+      <button class="subtle" title="shortlists it AND queues a cheap outline (what to lead with, framing per requirement, gaps, keywords) — take it to a chat session">shortlist + scaffold</button>
+    </form>
+    <form method="post" action="/jobs/{{ j['id'] }}/approve" id="ap-{{ j['id'] }}">
+      <button class="subtle" title="skip the shortlist and draft resume + cover letter now (WRITE tier — the expensive model)">draft materials now</button>
+    </form>
+    <form method="post" action="/jobs/{{ j['id'] }}/reevaluate">
+      <input type="hidden" name="redirect" value="/">
+      <button class="subtle" title="fresh eval against the current profile; re-fetches thin postings">re-evaluate</button>
+    </form>
+    {% if j['closed_at'] %}
+    <form method="post" action="/jobs/{{ j['id'] }}/unflag">
+      <input type="hidden" name="redirect" value="/">
+      <button class="subtle" title="the posting is actually still open — clears the flag and stops auto-flagging this job">↺ Not closed</button>
+    </form>
+    {% else %}
+    <form method="post" action="/jobs/{{ j['id'] }}/close">
+      <input type="hidden" name="redirect" value="/">
+      <button class="subtle" title="the posting is gone (dead link / filled) — archives it as closed. Not counted as a bad-match signal for profile tuning.">✖ Job no longer exists</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<p>Nothing waiting for review.</p>
+<form method="post" action="/run"
+      onsubmit="return confirm('Run the full pipeline now? Polls every source, then evaluates — same as the nightly run.')">
+  <input type="hidden" name="redirect" value="/jobs">
+  <button>Run pipeline now</button>
+</form>
+{% endfor %}
+<script>
+function copyListing(btn, descId) {
+  const title = btn.closest('.card').querySelector('h3').textContent.trim();
+  const body = document.getElementById(descId).textContent.trim();
+  copyText(title + '\n\n' + body).then(() => {
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => { btn.textContent = 'Copy listing'; }, 1500);
+  }).catch(() => { btn.textContent = 'Copy failed'; });
+}
+</script>
+{% endblock %}

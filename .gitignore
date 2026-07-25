@@ -1,0 +1,7 @@
+.env
+data/
+profiles/*.json
+!profiles/*.example.json
+__pycache__/
+*.pyc
+.venv/

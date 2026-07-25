@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Applications</h2>
+<form method="get" action="/drafts" style="max-width: 16rem;">
+  <input type="hidden" name="tab" value="{{ tab }}">
+  <label>Applicant:
+    <select name="applicant" onchange="this.form.submit()">
+      <option value="">all</option>
+      {% for a in applicants %}
+      <option value="{{ a }}" {% if a == selected %}selected{% endif %}>{{ a }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</form>
+{% set back = '/drafts?tab=' ~ tab ~ '&applicant=' ~ selected ~ ('&closed=1' if closed_filter else '') %}
+<p class="meta" style="display: flex; gap: 1rem; align-items: center;">
+  {% for t in ['shortlist', 'active', 'applied', 'archived'] %}
+  <a href="/drafts?tab={{ t }}&applicant={{ selected }}"
+     style="{{ 'font-weight: 700; text-decoration: none;' if t == tab }}">
+    {{ t }} ({{ tab_counts[t] }})</a>
+  {% endfor %}
+  {% if closed_filter %}
+  <a href="/drafts?tab={{ tab }}&applicant={{ selected }}" style="margin-left: auto; color: #c0392b; font-weight: 700;">✖ likely closed only — show all</a>
+  {% elif closed_count %}
+  <a href="/drafts?tab={{ tab }}&applicant={{ selected }}&closed=1" style="margin-left: auto; color: #c0392b;">✖ {{ closed_count }} likely closed — filter</a>
+  {% endif %}
+</p>
+{% if tab == 'shortlist' and jobs %}
+<p class="meta">Usual flow: <strong>Copy listing</strong> → paste into a chat session to
+tailor materials → <strong>Applied ✓</strong>. <strong>Scaffold</strong> buys a cheap
+outline first; in-pipeline drafting is the fallback, not the default.</p>
+{% endif %}
+{% for j in jobs %}
+<div class="card">
+  {% set reasons = {'absent': 'no longer listed on its job board', '404': 'posting URL returns 404 (removed)', '410': 'posting URL returns 410 (removed)', 'expired-text': 'the posting page says it is closed/filled', 'manual': 'you marked this posting gone'} %}
+  <h3>{{ j.title }} @ {{ j.company or '?' }}
+    {% if j.closed_at %}<span title="likely closed — {{ reasons.get(j.closed_reason, 'no longer available') }} (as of {{ j.closed_at }})" style="font-size: 0.7em; font-weight: 600; color: #c0392b; border: 1px solid currentColor; border-radius: 3px; padding: 0 0.3em; vertical-align: middle;">✖ likely closed</span>{% endif %}
+  </h3>
+  <div class="meta">{{ j.applicant_id }} · {{ j.created_at }}</div>
+  <p class="pitch"><strong>Why this one:</strong> {{ j.pitch }}</p>
+  {% if j.notes %}<p class="meta"><strong>Note:</strong> {{ j.notes }}</p>{% endif %}
+  {% if tab == 'archived' and j.feedback %}<p class="meta"><strong>Why archived:</strong> {{ j.feedback }}</p>{% endif %}
+  {% if tab == 'shortlist' and j.error %}<p class="meta" style="color: #c0392b;">⚠ {{ j.error }}</p>{% endif %}
+  {% if j.description %}
+  <details class="posting"><summary>full posting text</summary>
+    <div class="desc" id="desc-{{ j.id }}">{{ j.description }}</div>
+  </details>
+  {% endif %}
+  {% if tab in ('shortlist', 'active') %}
+  <div style="display: flex; gap: 0.4rem; margin: 0.3rem 0;">
+    <input type="text" id="dnote-{{ j.id }}" value="{{ j.notes or '' }}" style="flex: 1;"
+           placeholder="note, e.g. 'closes July 18th' / which resume you used / context for drafting">
+    <form method="post" action="/jobs/{{ j.id }}/note"
+          onsubmit="this.note.value = document.getElementById('dnote-{{ j.id }}').value">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="subtle" title="save this note without moving the job — stays on the shortlist">Save note</button>
+    </form>
+  </div>
+  {% endif %}
+  <div class="actions">
+    {% if j.closed_at %}
+    <form method="post" action="/jobs/{{ j.id }}/unflag">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button title="the probe was wrong — this posting is still open. Clears the flag and stops auto-flagging this job.">↺ Not closed — clear flag</button>
+    </form>
+    {% elif tab in ('shortlist', 'active') %}
+    <form method="post" action="/jobs/{{ j.id }}/close">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button title="the posting is gone (dead link / filled) — archives it as closed. Not counted as a bad-match signal for profile tuning.">✖ Job no longer exists</button>
+    </form>
+    {% endif %}
+    {% for d in j.docs %}
+    <a class="btn" href="/doc/{{ d.id }}" target="_blank">{{ d.kind.replace('_', ' ') }} ↗</a>
+    <button type="button" onclick="copyDoc(this, '{{ d.id }}')"
+            title="copy {{ d.kind.replace('_', ' ') }} Markdown to clipboard">copy</button>
+    {% endfor %}
+    {% if j.url %}<a class="btn" href="{{ j.url }}" target="_blank">{{ 'Posting' if tab == 'shortlist' else 'Apply' }} ↗</a>{% endif %}
+    {% if j.description %}
+    <button type="button" onclick="copyListing(this, 'desc-{{ j.id }}')"
+            title="copy title + full posting text, for pasting into a chat session">Copy listing</button>
+    {% endif %}
+    {% if tab == 'shortlist' %}
+    <form method="post" action="/jobs/{{ j.id }}/scaffold"
+          onsubmit="this.note.value = document.getElementById('dnote-{{ j.id }}').value">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="/drafts?tab=shortlist&applicant={{ selected }}">
+      <button title="cheap outline: what to lead with, framing per requirement, gaps, keywords — take it to a chat session (job stays shortlisted)">Scaffold</button>
+    </form>
+    {% endif %}
+    {% if tab in ('shortlist', 'active') %}
+    <form method="post" action="/jobs/{{ j.id }}/applied"
+          onsubmit="this.note.value = document.getElementById('dnote-{{ j.id }}').value">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="approve">Applied ✓</button>
+    </form>
+    {% endif %}
+    {% if tab == 'shortlist' %}
+    <form method="post" action="/jobs/{{ j.id }}/approve"
+          onsubmit="this.note.value = document.getElementById('dnote-{{ j.id }}').value">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="/drafts?tab=shortlist&applicant={{ selected }}">
+      <button class="subtle" title="full resume + cover letter draft in-pipeline (WRITE tier — the expensive model; usually a chat session does this better/cheaper)"
+        onclick="return confirm('Draft full materials in-pipeline? This uses the WRITE tier (the expensive model) — a chat session is usually the better deal.')">draft in-pipeline</button>
+    </form>
+    {% endif %}
+    {% if tab in ('shortlist', 'active') %}
+    <form method="post" action="/jobs/{{ j.id }}/archive"
+          onsubmit="this.feedback.value = document.getElementById('dnote-{{ j.id }}').value">
+      <input type="hidden" name="feedback" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="reject" title="changed my mind — moves to the archived tab; counts as negative signal for profile tuning">Archive</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if tab == 'active' %}
+  <p class="meta" style="margin-bottom: 0;">open a doc → browser print → PDF</p>
+  {% endif %}
+</div>
+{% else %}
+{% if tab == 'active' %}
+<p>No in-pipeline drafts. That's fine — the usual flow is shortlist → copy listing
+   into a chat session → mark Applied ✓.</p>
+{% elif tab == 'shortlist' %}
+<p>Shortlist is empty — hit <strong>Shortlist ★</strong> on good matches in
+   <a href="/">Review</a> and work through them here.</p>
+{% else %}
+<p>Nothing {{ tab }} yet.</p>
+{% endif %}
+{% endfor %}
+<script>
+function copyDoc(btn, docId) {
+  fetch('/doc/' + docId + '/raw').then(r => r.text()).then(md =>
+    copyText(md)
+  ).then(() => {
+    btn.textContent = 'copied ✓';
+    setTimeout(() => { btn.textContent = 'copy'; }, 1500);
+  }).catch(() => { btn.textContent = 'copy failed'; });
+}
+function copyListing(btn, descId) {
+  const title = btn.closest('.card').querySelector('h3').textContent.trim();
+  const body = document.getElementById(descId).textContent.trim();
+  copyText(title + '\n\n' + body).then(() => {
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => { btn.textContent = 'Copy listing'; }, 1500);
+  }).catch(() => { btn.textContent = 'Copy failed'; });
+}
+</script>
+{% endblock %}

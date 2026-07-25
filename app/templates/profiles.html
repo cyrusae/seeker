@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Profiles</h2>
+{% if msg %}<p class="msg">{{ msg }}</p>{% endif %}
+
+<table style="margin-bottom: 1.5rem;">
+  <tr><th>applicant</th><th>name</th><th>version</th><th>last updated</th><th>tuning report</th></tr>
+  {% for p in profiles %}
+  <tr>
+    <td>{{ p.applicant_id }}</td>
+    <td>{{ p.name or '?' }}</td>
+    <td>v{{ p.version }}</td>
+    <td>{{ p.updated }}</td>
+    <td><a class="btn subtle" href="/profiles/{{ p.applicant_id }}/report"
+           title="Markdown export of outcomes + your feedback — take it to a chat session with docs/interview_spec.md to produce the next profile version">download ⬇</a></td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5">No profiles yet — import one below.</td></tr>
+  {% endfor %}
+</table>
+
+<div class="card">
+  <h3>Import profile version</h3>
+  <p class="meta">Upload or paste a profile JSON (schema: docs/interview_spec.md).
+    Same applicant_id creates a new version; scoring uses the latest one.
+    After importing, hit Rescore on the Review page so unreviewed jobs get
+    re-scored against it.</p>
+  <form method="post" action="/profiles/upload" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".json,application/json"
+           style="margin-bottom: 0.5rem;">
+    <textarea name="text" rows="6"
+              placeholder='…or paste the profile JSON here (used if no file is chosen)'></textarea>
+    <div class="actions"><button class="approve">Import</button></div>
+  </form>
+</div>
+{% endblock %}

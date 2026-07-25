@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .co-group { border: 1px solid #8885; border-radius: 8px; padding: 0.7rem 0.9rem;
+              margin-bottom: 1rem; background: var(--card-bg); }
+  .co-group > h3 { margin: 0 0 0.5rem; }
+  .co-row { display: flex; gap: 0.55rem; align-items: baseline; padding: 0.25rem 0;
+            border-top: 1px solid #8883; }
+  .co-row:first-of-type { border-top: none; }
+  .co-main { flex: 1; cursor: pointer; }
+  .co-main:hover .co-title { text-decoration: underline; }
+  .co-row .co-title { font-weight: 600; }
+  .card-slot .card { border-left-width: 5px; }
+  .co-row a.btn { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
+  .cmp-panel { margin-top: 0.7rem; border-top: 2px solid #8886; padding-top: 0.6rem; display: none; }
+  .cmp-panel table { width: auto; min-width: 60%; }
+  .cmp-panel td, .cmp-panel th { font-size: 0.85rem; }
+  .cmp-summary { white-space: pre-wrap; margin-top: 0.6rem; padding: 0.6rem 0.8rem;
+                 border-radius: 6px; background: color-mix(in srgb, var(--ok) 10%, canvas);
+                 border: 1px solid #8884; }
+  .cmp-hint { font-size: 0.82rem; opacity: 0.7; margin-top: 0.4rem; }
+</style>
+<h2>Companies</h2>
+<form method="get" action="/companies" style="max-width: 16rem;">
+  <input type="hidden" name="view" value="{{ view }}">
+  {% if include_archived %}<input type="hidden" name="arch" value="1">{% endif %}
+  {% if include_applied %}<input type="hidden" name="appl" value="1">{% endif %}
+  <label>Applicant:
+    <select name="applicant" onchange="this.form.submit()">
+      <option value="">all</option>
+      {% for a in applicants %}
+      <option value="{{ a }}" {% if a == selected %}selected{% endif %}>{{ a }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</form>
+{% set qbase = '/companies?applicant=' ~ selected %}
+{% set flags = ('&arch=1' if include_archived else '') ~ ('&appl=1' if include_applied else '') %}
+<p class="meta" style="display: flex; gap: 1.1rem; align-items: center; flex-wrap: wrap;">
+  <a href="{{ qbase }}&view=active{{ flags }}"
+     style="{{ 'font-weight: 700; text-decoration: none;' if view == 'active' }}">review + shortlist</a>
+  <a href="{{ qbase }}&view=shortlist{{ flags }}"
+     style="{{ 'font-weight: 700; text-decoration: none;' if view == 'shortlist' }}">shortlist only</a>
+  <span style="margin-left: auto; display: flex; gap: 1.1rem; align-items: center;">
+    {% if include_applied %}
+    <a href="{{ qbase }}&view={{ view }}{{ '&arch=1' if include_archived }}">✓ applied shown — hide</a>
+    {% else %}
+    <a href="{{ qbase }}&view={{ view }}{{ '&arch=1' if include_archived }}&appl=1">+ include applied</a>
+    {% endif %}
+    {% if include_archived %}
+    <a href="{{ qbase }}&view={{ view }}{{ '&appl=1' if include_applied }}">✓ archived shown — hide</a>
+    {% else %}
+    <a href="{{ qbase }}&view={{ view }}{{ '&appl=1' if include_applied }}&arch=1">+ include archived</a>
+    {% endif %}
+  </span>
+</p>
+<p class="meta">Listings grouped by employer. In a company with more than one, tick
+  <strong>two</strong> to compare them — the field table is free and instant; hit
+  <strong>Compare</strong> for a cheap-model read of what actually differs.</p>
+
+{% for g in groups %}
+{% set gid = loop.index %}
+<div class="co-group" data-gid="{{ gid }}">
+  <h3>{{ g.company }} <span class="meta">· {{ g.jobs | length }}
+      listing{{ 's' if g.jobs | length != 1 }}</span></h3>
+  {% for j in g.jobs %}
+  {% set spair = j.id in g.similar_ids %}
+  <div class="co-row">
+    {% if g.jobs | length > 1 %}
+    <input type="checkbox" value="{{ j.id }}" data-gid="{{ gid }}"
+           data-title="{{ j.title }}"
+           data-loc="{{ j.location or '—' }}"
+           data-salary="{{ (j.salary | money) if j.salary else '—' }}"
+           data-score="{{ j.score if j.score is not none else '—' }}"
+           data-source="{{ j.source }}"
+           data-date="{{ (j.created_at or '')[:10] }}"
+           data-status="{{ j.status.replace('_', ' ') }}"
+           data-desc="{{ j.description or '' }}"
+           onchange="pick(this)" style="width: auto; flex: none; align-self: center;">
+    {% endif %}
+    <div class="co-main" onclick="toggleCard(this, '{{ j.id }}')" title="click to expand the full card">
+      <span class="co-title">▸ {{ j.title }}</span>
+      <span class="meta">· {{ j.applicant_id }} · {{ j.status.replace('_', ' ') }}
+        {% if j.score is not none %} · score {{ j.score }}{% endif %}
+        {% if spair %} · <span title="seeker flagged these as near-duplicates at ingest">⚠ near-dup</span>{% endif %}
+        {% if j.closed_at %} · <span style="color: #c0392b;">✖ likely closed</span>{% endif %}
+      </span>
+    </div>
+    {% if j.url %}<a class="btn" href="{{ j.url }}" target="_blank">↗</a>{% endif %}
+  </div>
+  <div class="card-slot" style="display: none;" data-loaded="0"></div>
+  {% endfor %}
+  {% if g.jobs | length > 1 %}
+  <div class="cmp-panel" data-gid="{{ gid }}"></div>
+  {% endif %}
+</div>
+{% else %}
+<p>No companies to show yet. Ingest or shortlist some jobs and they'll bucket here.</p>
+{% endfor %}
+
+<script>
+const APPLICANT = "{{ selected }}";
+
+// Expand a listing into its full card (lazy-loaded once, then toggled).
+function toggleCard(el, jobId) {
+  const slot = el.closest('.co-row').nextElementSibling;
+  const caret = el.querySelector('.co-title');
+  if (slot.dataset.loaded === '1') {
+    const showing = slot.style.display !== 'none';
+    slot.style.display = showing ? 'none' : 'block';
+    caret.textContent = caret.textContent.replace(showing ? '▾' : '▸', showing ? '▸' : '▾');
+    return;
+  }
+  slot.innerHTML = '<p class="cmp-hint">Loading…</p>';
+  slot.style.display = 'block';
+  fetch('/jobs/' + jobId + '/card?applicant=' + encodeURIComponent(APPLICANT))
+    .then(r => r.text()).then(html => {
+      slot.innerHTML = html;
+      slot.dataset.loaded = '1';
+      caret.textContent = caret.textContent.replace('▸', '▾');
+    })
+    .catch(() => { slot.innerHTML = '<p class="cmp-hint" style="color:#c0392b;">Couldn\'t load the card.</p>'; });
+}
+
+// Same synchronous, iOS-safe copy the Review/Applications cards use.
+function copyListing(btn, descId) {
+  const title = btn.closest('.card').querySelector('h3').textContent.trim();
+  const body = document.getElementById(descId).textContent.trim();
+  copyText(title + '\n\n' + body).then(() => {
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => { btn.textContent = 'Copy listing'; }, 1500);
+  }).catch(() => { btn.textContent = 'Copy failed'; });
+}
+
+const FIELDS = [['co-title','Title'],['loc','Location'],['salary','Salary'],
+                ['score','Score'],['source','Source'],['date','Date'],['status','Status']];
+const picks = {};  // gid -> [jobId in click order]
+
+function boxes(gid) {
+  return Array.from(document.querySelectorAll('input[type=checkbox][data-gid="' + gid + '"]'));
+}
+function box(gid, id) {
+  return boxes(gid).find(b => b.value === id);
+}
+
+function pick(cb) {
+  const gid = cb.dataset.gid;
+  const arr = picks[gid] || (picks[gid] = []);
+  if (cb.checked) {
+    arr.push(cb.value);
+    while (arr.length > 2) {                 // keep it to two — drop the oldest pick
+      const drop = arr.shift();
+      const el = box(gid, drop);
+      if (el) el.checked = false;
+    }
+  } else {
+    const i = arr.indexOf(cb.value);
+    if (i >= 0) arr.splice(i, 1);
+  }
+  render(gid);
+}
+
+function render(gid) {
+  const panel = document.querySelector('.cmp-panel[data-gid="' + gid + '"]');
+  const arr = picks[gid] || [];
+  if (arr.length < 2) {
+    panel.style.display = arr.length === 1 ? 'block' : 'none';
+    if (arr.length === 1) panel.innerHTML = '<p class="cmp-hint">Pick one more listing to compare.</p>';
+    return;
+  }
+  const a = box(gid, arr[0]).dataset, b = box(gid, arr[1]).dataset;
+  let rows = FIELDS.map(([k, label]) => {
+    const va = k === 'co-title' ? a.title : a[k];
+    const vb = k === 'co-title' ? b.title : b[k];
+    const diff = String(va) !== String(vb);
+    return '<tr><th>' + label + '</th><td' + (diff ? ' style="font-weight:700"' : '') +
+           '>' + esc(va) + '</td><td' + (diff ? ' style="font-weight:700"' : '') +
+           '>' + esc(vb) + '</td></tr>';
+  }).join('');
+  panel.innerHTML =
+    '<table><tr><th></th><th>A</th><th>B</th></tr>' + rows + '</table>' +
+    '<div class="actions" style="margin-top:0.5rem;">' +
+    '<button type="button" onclick="doCompare(this,\'' + gid + '\')">Compare ▸</button>' +
+    '<button type="button" class="subtle" onclick="copyBoth(this,\'' + gid + '\')"' +
+    ' title="copy both listings, framed for pasting into a chat session — no token cost">Copy both listings</button>' +
+    '</div><div class="cmp-out"></div>';
+  panel.style.display = 'block';
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
+
+function copyBoth(btn, gid) {
+  const arr = picks[gid] || [];
+  if (arr.length < 2) return;
+  const a = box(gid, arr[0]).dataset, b = box(gid, arr[1]).dataset;
+  const text =
+    "I'm comparing two job postings from the same company — help me understand what actually differs (role, seniority, required skills, scope, location, comp).\n\n" +
+    "=== LISTING A ===\n" + a.title + "\n\n" + (a.desc || '(no description)') + "\n\n" +
+    "=== LISTING B ===\n" + b.title + "\n\n" + (b.desc || '(no description)');
+  copyText(text).then(() => {
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => { btn.textContent = 'Copy both listings'; }, 1500);
+  }).catch(() => { btn.textContent = 'Copy failed'; });
+}
+
+function doCompare(btn, gid, refresh) {
+  const arr = picks[gid] || [];
+  if (arr.length < 2) return;
+  const out = btn.closest('.cmp-panel').querySelector('.cmp-out');
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = 'Comparing…';
+  const body = new URLSearchParams({job_a: arr[0], job_b: arr[1]});
+  if (refresh) body.set('refresh', '1');
+  fetch('/compare', {method: 'POST', body}).then(r => r.json()).then(d => {
+    btn.disabled = false;
+    btn.textContent = label;
+    let html = '';
+    if (d.similarity != null)
+      html += '<p class="cmp-hint">Text similarity: <strong>' + d.similarity + '%</strong>' +
+              (d.cached ? ' · cached' : '') + '</p>';
+    if (d.summary)
+      html += '<div class="cmp-summary">' + esc(d.summary) + '</div>' +
+              '<div class="actions" style="margin-top:0.4rem;">' +
+              '<button type="button" class="subtle" onclick="doCompare(this,\'' + gid + '\',1)">↻ re-compare</button></div>';
+    if (d.error && !d.summary)
+      html += '<p class="cmp-hint" style="color:#c0392b;">Couldn\'t summarize: ' + esc(d.error) + '</p>';
+    out.innerHTML = html;
+  }).catch(() => {
+    btn.disabled = false;
+    btn.textContent = label;
+    out.innerHTML = '<p class="cmp-hint" style="color:#c0392b;">Compare request failed.</p>';
+  });
+}
+</script>
+{% endblock %}

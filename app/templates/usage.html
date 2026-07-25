@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Usage &amp; spend</h2>
+{% set frac = (spend / budget) if budget else 1 %}
+<p><strong>${{ '%.2f' % spend }}</strong> of ${{ '%.2f' % budget }} monthly budget
+{% if spend >= budget %} — <span class="scam-high">budget reached; paid calls fall
+back to local (or refuse, per config)</span>{% endif %}</p>
+<div class="spend-bar {{ 'over' if frac >= 1 else '' }}">
+  <div style="width: {{ [frac * 100, 100] | min }}%"></div>
+</div>
+<p class="meta" style="margin-top: 0.6rem;">
+  {% if run_status and run_status.running %}
+    <span class="badge">running now</span> phase: {{ run_status.phase }}
+    (started {{ run_status.started_at }})
+    {% if run_status.ingested is not none %} · {{ run_status.ingested }} ingested{% endif %}
+    {% if run_status.evaluated is not none %} · {{ run_status.evaluated }} evaluated{% endif %}
+  {% elif run_status and run_status.phase == 'stopped' %}
+    <span class="scam-high">stopped</span> — {{ run_status.evaluated or 0 }} evaluated before stop;
+    the rest stay pending and resume on the next run
+  {% elif last_cycle %}
+    Last full cycle:
+    {% if cycle_overdue %}<span class="scam-high">⚠ {{ last_cycle }}</span>{% else %}<strong>{{ last_cycle }}</strong>{% endif %}
+    {% if cycle_age_h is not none %}({{ '%.0f' % cycle_age_h }}h ago){% endif %}
+  {% else %}
+    <span class="scam-high">⚠ No full cycle has completed yet.</span>
+  {% endif %}
+  · nightly at {{ '%02d:00' % pipeline_hour }} local
+  {% if cycle_overdue %}<br><span class="scam-high">The scheduled run hasn't landed in over a day — the machine was likely asleep or off at {{ '%02d:00' % pipeline_hour }}. Run it now, or leave the box awake at that hour.</span>{% endif %}
+</p>
+<div style="display: flex; gap: 0.5rem; align-items: center;">
+  <form method="post" action="/run"
+        onsubmit="return confirm('Run the full pipeline now? Polls all sources, then evaluates everything new (costs tokens). Progress shows on the Jobs page.')">
+    <button>Run full pipeline now</button>
+  </form>
+  {% if run_status and run_status.running %}
+  <form method="post" action="/pipeline/stop"
+        onsubmit="return confirm('Stop after the current job? Work already done is kept; unevaluated jobs stay pending and resume next run.')">
+    <input type="hidden" name="redirect" value="/usage">
+    <button class="reject">■ Stop pipeline</button>
+  </form>
+  {% endif %}
+</div>
+<br>
+<table>
+  <tr><th>month</th><th>role</th><th>provider</th><th>model</th>
+      <th>in tok</th><th>out tok</th><th>cost $</th></tr>
+  {% for r in rows %}
+  <tr><td>{{ r['month'] }}</td><td>{{ r['role'] }}</td><td>{{ r['provider'] }}</td>
+      <td>{{ r['model'] }}</td><td>{{ '{:,}'.format(r['in_tok'] or 0) }}</td>
+      <td>{{ '{:,}'.format(r['out_tok'] or 0) }}</td>
+      <td>{{ r['cost'] }}</td></tr>
+  {% endfor %}
+</table>
+
+{% if errors %}
+<h3 style="display: flex; justify-content: space-between; align-items: center;">
+  Recent errors
+  <form method="post" action="/errors/clear"
+        onsubmit="return confirm('Delete all error records?')">
+    <input type="hidden" name="redirect" value="/usage">
+    <button class="subtle">Clear all errors</button>
+  </form>
+</h3>
+{% for j in errors %}
+<div class="card err">
+  <h3>{{ j['title'] or '(untitled)' }}</h3>
+  <div class="meta">{{ j['applicant_id'] }} · {{ j['created_at'] }} · via {{ j['source'] }}</div>
+  <p class="concerns">{{ j['error'] }}</p>
+  <div class="actions">
+    <form method="post" action="/jobs/{{ j['id'] }}/retry">
+      <input type="hidden" name="redirect" value="/usage">
+      <button class="subtle">Retry</button>
+    </form>
+    <form method="post" action="/jobs/{{ j['id'] }}/shortlist">
+      <input type="hidden" name="redirect" value="/usage">
+      <button class="subtle" title="clear the error and park it on the shortlist to handle manually">Shortlist instead</button>
+    </form>
+    <form method="post" action="/jobs/{{ j['id'] }}/delete">
+      <input type="hidden" name="redirect" value="/usage">
+      <button class="subtle">Dismiss</button>
+    </form>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}

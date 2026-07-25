@@ -1,0 +1,86 @@
+{# Full job card, rendered as a fragment for the Companies expand-in-place view.
+   Mirrors the Review/Applications cards; actions redirect back to /companies. #}
+{% set reasons = {'absent': 'no longer listed on its job board', '404': 'posting URL returns 404 (removed)', '410': 'posting URL returns 410 (removed)', 'expired-text': 'the posting page says it is closed/filled'} %}
+{% set back = '/companies?applicant=' ~ applicant %}
+<div class="card" style="margin-top: 0.5rem;">
+  {% if j.score is not none %}
+  {% set s = j.score or 0 %}
+  <span class="score {{ 'score-hi' if s >= 75 else 'score-mid' if s >= 55 else 'score-lo' }}">{{ s }}</span>
+  {% endif %}
+  <h3>{{ j.title }} — {{ j.company or '?' }}
+    {% if j.closed_at %}<span title="likely closed — {{ reasons.get(j.closed_reason, 'no longer available') }} (as of {{ j.closed_at }})" style="font-size: 0.7em; font-weight: 600; color: #c0392b; border: 1px solid currentColor; border-radius: 3px; padding: 0 0.3em; vertical-align: middle;">✖ likely closed</span>{% endif %}
+  </h3>
+  <div class="meta">
+    {{ j.applicant_id }}{% if j.location %} · {{ j.location }}{% endif %}
+    {% if j.salary %} · {{ j.salary | money }}{% endif %} · via {{ j.source }}
+    {% if j.escalated %} · <span class="badge">escalated</span>{% endif %}
+    {% if j.scam_risk and j.scam_risk != 'none' %} · <span class="scam-{{ j.scam_risk }}">⚠ scam risk: {{ j.scam_risk }}</span>{% endif %}
+    · {{ (j.created_at or '')[:10] }} · {{ j.status.replace('_', ' ') }}
+  </div>
+  {% if j.similar_title %}
+  <p class="meta" style="color: var(--warn);">⚠ similar listing already ingested:
+    “{{ j.similar_title }}” (currently {{ (j.similar_status or '?').replace('_', ' ') }}).</p>
+  {% endif %}
+  {% if j.pitch %}<p class="pitch"><strong>Why:</strong> {{ j.pitch }}</p>{% endif %}
+  {% if j.concerns %}<p class="concerns"><strong>Concerns:</strong> {{ j.concerns }}</p>{% endif %}
+  {% if j.notes %}<p class="meta"><strong>Note:</strong> {{ j.notes }}</p>{% endif %}
+  {% if j.feedback and j.status == 'archived' %}<p class="meta"><strong>Why archived:</strong> {{ j.feedback }}</p>{% endif %}
+  {% if j.description %}
+  <details class="posting"><summary>full posting text</summary>
+    <div class="desc" id="cardesc-{{ j.id }}">{{ j.description }}</div>
+  </details>
+  {% endif %}
+  <input type="text" id="cnote-{{ j.id }}" value="{{ j.notes or '' }}"
+         placeholder="note — kept with the job (context for drafting, 'closes July 18th', which resume you used)"
+         style="width: 100%; margin: 0.4rem 0;">
+  <div class="actions">
+    {% if j.url %}<a class="btn" href="{{ j.url }}" target="_blank">Posting ↗</a>{% endif %}
+    {% if j.description %}
+    <button type="button" onclick="copyListing(this, 'cardesc-{{ j.id }}')"
+            title="copy title + full posting text, for pasting into a chat session">Copy listing</button>
+    {% endif %}
+    {% for d in docs %}
+    <a class="btn" href="/doc/{{ d.id }}" target="_blank">{{ d.kind.replace('_', ' ') }} ↗</a>
+    {% endfor %}
+    <form method="post" action="/jobs/{{ j.id }}/note"
+          onsubmit="this.note.value = document.getElementById('cnote-{{ j.id }}').value">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="subtle" title="save this note without changing the job's status">Save note</button>
+    </form>
+    {% if j.status == 'pending_user_review' %}
+    <form method="post" action="/jobs/{{ j.id }}/shortlist"
+          onsubmit="this.note.value = document.getElementById('cnote-{{ j.id }}').value">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="approve" title="good match — parks it on the Applications shortlist">Shortlist ★</button>
+    </form>
+    {% endif %}
+    {% if j.status in ('pending_user_review', 'shortlisted', 'approved', 'draft_created') %}
+    <form method="post" action="/jobs/{{ j.id }}/applied"
+          onsubmit="this.note.value = document.getElementById('cnote-{{ j.id }}').value">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="approve">Applied ✓</button>
+    </form>
+    <form method="post" action="/jobs/{{ j.id }}/scaffold"
+          onsubmit="this.note.value = document.getElementById('cnote-{{ j.id }}').value">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="subtle" title="cheap framing outline — take it to a chat session (job stays/gets shortlisted)">Scaffold</button>
+    </form>
+    <form method="post" action="/jobs/{{ j.id }}/archive"
+          onsubmit="this.feedback.value = document.getElementById('cnote-{{ j.id }}').value">
+      <input type="hidden" name="feedback" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="reject" title="changed my mind — moves to Applications → archived; negative tuning signal">Archive</button>
+    </form>
+    {% endif %}
+    {% if j.closed_at %}
+    <form method="post" action="/jobs/{{ j.id }}/unflag">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button title="the probe was wrong — clears the flag and stops auto-flagging this job">↺ Not closed</button>
+    </form>
+    {% endif %}
+  </div>
+</div>

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block head %}
+{% set busy = recent | selectattr('status', 'in', ['pending_extract', 'pending_eval']) | list %}
+{% if busy %}<meta http-equiv="refresh" content="5">{% endif %}
+{% endblock %}
+{% block content %}
+{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+<h2>Submit a job</h2>
+<p class="meta">Paste the posting text (reliable) or give a URL alone (best-effort
+fetch — LinkedIn usually needs pasted text). If you provide both, the text is
+used for extraction and the URL is kept as the application link.</p>
+<form method="post" action="/submit">
+  <p><label>For:
+    <select name="applicant_id">
+      {% for a in applicants %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
+    </select>
+  </label></p>
+  <p><label>Application URL <span class="meta">(optional — kept as the apply link)</span></label>
+     <input type="url" name="url" placeholder="https://"></p>
+  <p><label>Posting text</label>
+     <textarea name="text" rows="10" placeholder="paste the full posting text here"></textarea></p>
+  <button class="approve">Submit</button>
+</form>
+
+<h3>Recent manual submissions</h3>
+{% for j in recent %}
+<div class="card {{ 'err' if j['status'] == 'error' else '' }}">
+  <h3>{{ j['title'] or '(untitled)' }} — {{ j['company'] or '?' }}</h3>
+  <div class="meta">{{ j['applicant_id'] }} ·
+    <span class="badge st-{{ j['status'] }}">{{ j['status'].replace('_', ' ') }}</span>
+    {% if j['score'] is not none %} · scored {{ j['score'] }}{% endif %}
+    {% if j['url'] %} · <a href="{{ j['url'] }}" target="_blank">link</a>{% endif %}
+  </div>
+  {% if j['error'] %}<p class="concerns">{{ j['error'] }}</p>{% endif %}
+  <div class="actions">
+    {% if j['status'] == 'pending_eval' %}
+    <form method="post" action="/jobs/{{ j['id'] }}/eval"><button>Eval now</button></form>
+    {% endif %}
+    {% if j['status'] == 'pending_user_review' %}
+    <form method="post" action="/jobs/{{ j['id'] }}/shortlist">
+      <input type="hidden" name="redirect" value="/submit">
+      <button class="approve" title="parks it on the Applications shortlist to work from">Shortlist ★</button>
+    </form>
+    {% endif %}
+    {% if j['status'] in ('pending_user_review', 'shortlisted') %}
+    <form method="post" action="/jobs/{{ j['id'] }}/approve">
+      <input type="hidden" name="redirect" value="/submit">
+      <button class="subtle" title="skip the shortlist and draft in-pipeline (WRITE tier)">draft materials</button>
+    </form>
+    {% endif %}
+    {% if j['status'] == 'error' %}
+    <form method="post" action="/jobs/{{ j['id'] }}/retry">
+      <input type="hidden" name="redirect" value="/submit">
+      <button>Retry</button>
+    </form>
+    {% endif %}
+    <form method="post" action="/jobs/{{ j['id'] }}/delete"
+          onsubmit="return confirm('Remove this submission from the record?')">
+      <input type="hidden" name="redirect" value="/submit">
+      <button class="subtle">Remove</button>
+    </form>
+  </div>
+</div>
+{% else %}
+<p class="meta">None yet.</p>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,14 @@
+services:
+  seeker:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      DATA_DIR: /srv/data
+    volumes:
+      - ./data:/srv/data
+      - ./profiles:/srv/profiles
+    restart: unless-stopped
+    # Ollama on the docker host: use host.docker.internal (mac/win) or the
+    # host LAN IP (linux) in LOCAL_BASE_URL.

@@ -1,0 +1,27 @@
+{
+  "applicant_id": "cyrus",
+  "name": "Cyrus (EXAMPLE — replace via interview_spec.md session)",
+  "profile": {
+    "summary": "Software engineer. Replace this whole profile by running the interview in docs/interview_spec.md.",
+    "skills": ["Python", "..."],
+    "work_history": [
+      {"role": "...", "org": "...", "duration": "...", "highlights": ["..."]}
+    ],
+    "education": ["..."],
+    "framing_notes": []
+  },
+  "criteria": {
+    "target_roles": ["software engineer"],
+    "hard_filters": {"location": "Remote (US) or Seattle metro", "salary_floor": null, "other": []},
+    "anti_criteria": [],
+    "soft_preferences": [],
+    "scam_wariness": "medium"
+  },
+  "prefilter": {
+    "title_exclude": ["director", "dean", "product manager", "principal", ".NET"]
+  },
+  "sources": {
+    "greenhouse": {"boards": [], "title_include": ["engineer", "developer"]},
+    "adzuna": {"queries": [{"what": "software engineer", "where": "Seattle, WA", "max_days_old": 7}]}
+  }
+}
