@@ -28,8 +28,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     description TEXT,
     status TEXT NOT NULL DEFAULT 'pending_eval',
     -- pending_extract | pending_eval | filtered | pending_user_review | skipped
-    -- | approved | rejected | shortlisted | draft_created | applied | error
-    -- | archived (was shortlisted/drafted, then withdrawn by the user)
+    -- | rejected | shortlisted | applied | error
+    -- | archived (was shortlisted, then withdrawn by the user)
     score INTEGER,
     pitch TEXT,
     concerns TEXT,
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     eval_json TEXT,
     escalated INTEGER DEFAULT 0,
     feedback TEXT,
-    notes TEXT,   -- reviewer note passed to the drafting agent
+    notes TEXT,   -- reviewer note, kept with the job for later reference
     similar_to TEXT,  -- id of a near-duplicate listing found at ingest (flag, not drop)
     poll_source TEXT,  -- originating adapter (greenhouse, lever, ...); NULL for manual
     closed_at TEXT,    -- set when the posting vanished from its board (see closure sweep)
@@ -49,10 +49,13 @@ CREATE TABLE IF NOT EXISTS jobs (
     reviewed_at TEXT,
     UNIQUE(applicant_id, dedupe_key)
 );
+-- Legacy: in-pipeline document generation was removed (drafting now happens
+-- in a chat session outside the app). Table kept only so old rows/files from
+-- before the removal aren't orphaned; nothing writes to it anymore.
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
     job_id TEXT NOT NULL,
-    kind TEXT NOT NULL,           -- resume | cover_letter
+    kind TEXT NOT NULL,           -- resume | cover_letter | scaffold
     path_md TEXT NOT NULL,
     path_html TEXT,
     created_at TEXT NOT NULL

@@ -1,4 +1,4 @@
-"""FastAPI app: review dashboard, manual submission, drafts, usage."""
+"""FastAPI app: review dashboard, manual submission, applications, usage."""
 import os
 import re
 import threading
@@ -10,8 +10,7 @@ import json
 from apscheduler.events import EVENT_JOB_ERROR
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import BackgroundTasks, FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import (
-    FileResponse, JSONResponse, PlainTextResponse, RedirectResponse)
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from . import compare, db, notify, pipeline, report
@@ -42,20 +41,12 @@ templates.env.filters["money"] = _money
 
 def _resume_interrupted():
     """A restart (or --reload picking up a file edit) kills in-flight background
-    tasks. Pick the queue back up: approved jobs whose write never finished,
-    then everything still waiting for an eval."""
+    tasks. Pick the queue back up: everything still waiting for an eval."""
     with db.connect() as conn:
-        stalled = [r["id"] for r in conn.execute(
-            """SELECT j.id FROM jobs j LEFT JOIN documents d ON d.job_id = j.id
-               WHERE j.status='approved' AND d.id IS NULL""")]
         pending = conn.execute(
             "SELECT COUNT(*) n FROM jobs WHERE status='pending_eval'").fetchone()["n"]
-    if stalled or pending:
-        print(f"[seeker] resuming interrupted work: {pending} pending evals, "
-              f"{len(stalled)} unfinished drafts")
-    for jid in stalled:
-        pipeline.generate_documents(jid)
     if pending:
+        print(f"[seeker] resuming interrupted work: {pending} pending evals")
         pipeline.evaluate_pending()
 
 
@@ -168,34 +159,6 @@ def review(request: Request, applicant: str = ""):
     return _remember_applicant(request, resp, applicant)
 
 
-@app.post("/jobs/{job_id}/approve")
-def approve(job_id: str, background: BackgroundTasks, redirect: str = Form("/"),
-            note: str = Form("")):
-    with db.connect() as conn:
-        conn.execute(
-            "UPDATE jobs SET status='approved', reviewed_at=?, "
-            "notes=COALESCE(NULLIF(?, ''), notes) WHERE id=?",
-            (db.now(), note.strip(), job_id))
-    background.add_task(pipeline.generate_documents, job_id)
-    return RedirectResponse(redirect, status_code=303)
-
-
-@app.post("/jobs/{job_id}/scaffold")
-def scaffold(job_id: str, background: BackgroundTasks, redirect: str = Form("/drafts?tab=shortlist"),
-             note: str = Form("")):
-    """Cheap framing outline instead of a full draft. Shortlists the job if it
-    wasn't already (scaffolding implies interest, and the outline is viewed on
-    the shortlist tab); already-shortlisted jobs stay shortlisted."""
-    with db.connect() as conn:
-        conn.execute(
-            "UPDATE jobs SET notes=COALESCE(NULLIF(?, ''), notes), "
-            "status=CASE WHEN status='pending_user_review' THEN 'shortlisted' "
-            "ELSE status END, reviewed_at=COALESCE(reviewed_at, ?) WHERE id=?",
-            (note.strip(), db.now(), job_id))
-    background.add_task(pipeline.generate_scaffold, job_id)
-    return RedirectResponse(redirect, status_code=303)
-
-
 @app.post("/jobs/{job_id}/reject")
 def reject(job_id: str, feedback: str = Form(""), redirect: str = Form("/")):
     with db.connect() as conn:
@@ -206,10 +169,10 @@ def reject(job_id: str, feedback: str = Form(""), redirect: str = Form("/")):
 
 
 @app.post("/jobs/{job_id}/archive")
-def archive(job_id: str, feedback: str = Form(""), redirect: str = Form("/drafts")):
-    """Withdraw a job from the applications flow (shortlisted/drafted, then
-    changed mind). Same negative tuning signal as reject, separate status so
-    the Applications archived tab isn't flooded with ordinary Review rejects."""
+def archive(job_id: str, feedback: str = Form(""), redirect: str = Form("/applications")):
+    """Withdraw a job from the applications flow (shortlisted, then changed
+    mind). Same negative tuning signal as reject, separate status so the
+    Applications archived tab isn't flooded with ordinary Review rejects."""
     with db.connect() as conn:
         conn.execute(
             "UPDATE jobs SET status='archived', feedback=COALESCE(NULLIF(?, ''), feedback), "
@@ -333,11 +296,8 @@ def job_card(request: Request, job_id: str, applicant: str = ""):
                WHERE j.id=?""", (job_id,)).fetchone()
         if not j:
             return PlainTextResponse("not found", status_code=404)
-        docs = conn.execute(
-            "SELECT id, kind FROM documents WHERE job_id=? ORDER BY created_at", (job_id,)
-        ).fetchall()
     return templates.TemplateResponse(request, "_jobcard.html", {
-        "j": j, "docs": docs, "applicant": applicant,
+        "j": j, "applicant": applicant,
     })
 
 
@@ -363,8 +323,7 @@ def jobs_bulk(background: BackgroundTasks, action: str = Form(...),
             conn.execute(f"DELETE FROM jobs WHERE id IN ({marks})", job_ids)
         elif action == "reject":
             # Unlike delete, this keeps the row (and its dedupe key), so polled
-            # jobs won't come back on the next ingest. Never touches jobs that
-            # were approved/drafted/applied.
+            # jobs won't come back on the next ingest. Never touches applied jobs.
             conn.execute(
                 f"""UPDATE jobs SET status='rejected', reviewed_at=? WHERE id IN ({marks})
                     AND status IN ('pending_extract','pending_eval','pending_user_review',
@@ -401,9 +360,9 @@ def reevaluate(job_id: str, background: BackgroundTasks, redirect: str = Form("/
 
 @app.post("/jobs/{job_id}/shortlist")
 def shortlist(job_id: str, redirect: str = Form("/"), note: str = Form("")):
-    """Confirmed-interested without generating materials yet. Counts as a
-    positive signal in the tuning report; draft later from the Jobs page.
-    A note entered now is kept and used when drafting happens."""
+    """Confirmed-interested. Counts as a positive signal in the tuning report.
+    A note entered now is kept for later reference (e.g. context to bring
+    into a chat session when drafting materials)."""
     with db.connect() as conn:
         conn.execute(
             "UPDATE jobs SET status='shortlisted', reviewed_at=?, error=NULL, "
@@ -413,7 +372,7 @@ def shortlist(job_id: str, redirect: str = Form("/"), note: str = Form("")):
 
 
 @app.post("/jobs/{job_id}/note")
-def save_note(job_id: str, redirect: str = Form("/drafts?tab=shortlist"),
+def save_note(job_id: str, redirect: str = Form("/applications?tab=shortlist"),
               note: str = Form("")):
     """Persist an annotation without moving the job out of its zone — e.g.
     'closes July 18th'. Unlike the zone-changing buttons, this writes the note
@@ -424,7 +383,7 @@ def save_note(job_id: str, redirect: str = Form("/drafts?tab=shortlist"),
 
 
 @app.post("/jobs/{job_id}/unflag")
-def unflag_closed(job_id: str, redirect: str = Form("/drafts?tab=shortlist")):
+def unflag_closed(job_id: str, redirect: str = Form("/applications?tab=shortlist")):
     """Human override: the posting is actually still open (the probe was wrong).
     Clear the closure flag AND set closure_dismissed so neither the board-diff
     sweep nor the URL probe re-flags this job."""
@@ -493,22 +452,16 @@ def rescore(background: BackgroundTasks, applicant: str = Form(""),
 
 @app.post("/jobs/{job_id}/retry")
 def retry_job(job_id: str, background: BackgroundTasks, redirect: str = Form("/usage")):
-    """Retry an errored job. Write-stage failures (already approved) re-run
-    document generation; everything else goes back through eval."""
+    """Retry an errored job by sending it back through eval."""
     with db.connect() as conn:
         job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         if job is None or job["status"] != "error":
             return RedirectResponse(redirect, status_code=303)
-        was_approved = job["reviewed_at"] is not None and job["score"] is not None
-        if was_approved:
-            conn.execute("UPDATE jobs SET status='approved', error=NULL WHERE id=?", (job_id,))
-        else:
-            conn.execute(
-                "UPDATE jobs SET status='pending_eval', error=NULL, score=NULL, "
-                "pitch=NULL, concerns=NULL, scam_risk=NULL, eval_json=NULL, escalated=0 "
-                "WHERE id=?", (job_id,))
-    background.add_task(
-        pipeline.generate_documents if was_approved else pipeline.evaluate_job, job_id)
+        conn.execute(
+            "UPDATE jobs SET status='pending_eval', error=NULL, score=NULL, "
+            "pitch=NULL, concerns=NULL, scam_risk=NULL, eval_json=NULL, escalated=0 "
+            "WHERE id=?", (job_id,))
+    background.add_task(pipeline.evaluate_job, job_id)
     return RedirectResponse(redirect, status_code=303)
 
 
@@ -529,88 +482,50 @@ def clear_errors(redirect: str = Form("/usage")):
     return RedirectResponse(redirect, status_code=303)
 
 
-# Drafts-page tabs → the job status behind each. "archived" = rejected after
-# drafting (changed my mind), which keeps it as negative signal for tuning.
-# Tab order mirrors the application lifecycle: shortlist → active → applied.
-DRAFT_TABS = {"shortlist": "shortlisted", "active": "draft_created",
-              # "archived" is its own status (not 'rejected') so the tab shows
-              # only jobs withdrawn from this flow, not every Review reject.
-              "applied": "applied", "archived": "archived"}
+# Applications-page tabs → the job status behind each. "archived" = shortlisted
+# then withdrawn (changed my mind), which keeps it as negative signal for tuning.
+# Tab order mirrors the application lifecycle: shortlist → applied.
+APPLICATION_TABS = {"shortlist": "shortlisted",
+                     # "archived" is its own status (not 'rejected') so the tab shows
+                     # only jobs withdrawn from this flow, not every Review reject.
+                     "applied": "applied", "archived": "archived"}
 
 
-@app.get("/drafts")
-def drafts(request: Request, applicant: str = "", tab: str = "shortlist",
-           closed: str = ""):
+@app.get("/applications")
+def applications(request: Request, applicant: str = "", tab: str = "shortlist",
+                  closed: str = ""):
     applicant = _sticky_applicant(request, applicant)
-    if tab not in DRAFT_TABS:
+    if tab not in APPLICATION_TABS:
         tab = "shortlist"
-    # All tabs except active show their jobs drafted or not (shortlist and
-    # archived entries may have no documents; "applied elsewhere" never does).
-    join = "JOIN" if tab == "active" else "LEFT JOIN"
-    q = f"""SELECT d.id doc_id, d.kind, j.id job_id, j.created_at, j.title,
-                   j.company, j.pitch, j.notes, j.feedback, j.applicant_id, j.url,
-                   j.description, j.error, j.closed_at, j.closed_reason
-            FROM jobs j {join} documents d ON d.job_id = j.id WHERE j.status=?"""
-    args: list = [DRAFT_TABS[tab]]
-    cq = """SELECT j.status s, COUNT(DISTINCT j.id) n FROM jobs j
-            LEFT JOIN documents d ON d.job_id = j.id
-            WHERE (j.status IN ('applied','shortlisted','archived') OR d.id IS NOT NULL)"""
+    q = """SELECT id, created_at, title, company, pitch, notes, feedback,
+                  applicant_id, url, description, error, closed_at, closed_reason
+           FROM jobs WHERE status=?"""
+    args: list = [APPLICATION_TABS[tab]]
+    cq = "SELECT status s, COUNT(*) n FROM jobs WHERE status IN ('applied','shortlisted','archived')"
     cargs: list = []
     # count of flagged-closed jobs within the current tab (drives the filter chip)
     clq = "SELECT COUNT(*) n FROM jobs WHERE status=? AND closed_at IS NOT NULL"
-    clargs: list = [DRAFT_TABS[tab]]
+    clargs: list = [APPLICATION_TABS[tab]]
     if applicant:
-        q += " AND j.applicant_id=?"
+        q += " AND applicant_id=?"
         args.append(applicant)
-        cq += " AND j.applicant_id=?"
+        cq += " AND applicant_id=?"
         cargs.append(applicant)
         clq += " AND applicant_id=?"
         clargs.append(applicant)
     if closed:
-        q += " AND j.closed_at IS NOT NULL"
+        q += " AND closed_at IS NOT NULL"
     with db.connect() as conn:
-        rows = conn.execute(q + " ORDER BY j.created_at DESC", args).fetchall()
-        by_status = {r["s"]: r["n"] for r in conn.execute(cq + " GROUP BY j.status", cargs)}
+        rows = conn.execute(q + " ORDER BY created_at DESC", args).fetchall()
+        by_status = {r["s"]: r["n"] for r in conn.execute(cq + " GROUP BY status", cargs)}
         closed_count = conn.execute(clq, clargs).fetchone()["n"]
         names = _applicants(conn)
-    tab_counts = {t: by_status.get(s, 0) for t, s in DRAFT_TABS.items()}
-    # Group documents by job so the pitch shows once per application.
-    grouped: dict[str, dict] = {}
-    for r in rows:
-        g = grouped.setdefault(r["job_id"], {
-            "id": r["job_id"], "title": r["title"], "company": r["company"],
-            "pitch": r["pitch"], "notes": r["notes"], "feedback": r["feedback"],
-            "applicant_id": r["applicant_id"], "url": r["url"],
-            "description": r["description"], "error": r["error"],
-            "closed_at": r["closed_at"], "closed_reason": r["closed_reason"],
-            "created_at": r["created_at"], "docs": [],
-        })
-        if r["doc_id"]:
-            g["docs"].append({"id": r["doc_id"], "kind": r["kind"]})
-    resp = templates.TemplateResponse(request, "drafts.html", {
-        "jobs": grouped.values(), "applicants": names, "selected": applicant,
+    tab_counts = {t: by_status.get(s, 0) for t, s in APPLICATION_TABS.items()}
+    resp = templates.TemplateResponse(request, "applications.html", {
+        "jobs": rows, "applicants": names, "selected": applicant,
         "tab": tab, "tab_counts": tab_counts,
         "closed_count": closed_count, "closed_filter": bool(closed)})
     return _remember_applicant(request, resp, applicant)
-
-
-@app.get("/doc/{doc_id}")
-def doc(doc_id: str):
-    with db.connect() as conn:
-        row = conn.execute("SELECT path_html FROM documents WHERE id=?", (doc_id,)).fetchone()
-    if row and os.path.exists(row["path_html"]):
-        return FileResponse(row["path_html"])
-    return RedirectResponse("/drafts", status_code=303)
-
-
-@app.get("/doc/{doc_id}/raw")
-def doc_raw(doc_id: str):
-    """Raw Markdown source — what the card's copy buttons fetch."""
-    with db.connect() as conn:
-        row = conn.execute("SELECT path_md FROM documents WHERE id=?", (doc_id,)).fetchone()
-    if row and os.path.exists(row["path_md"]):
-        return FileResponse(row["path_md"], media_type="text/plain")
-    return PlainTextResponse("not found", status_code=404)
 
 
 @app.get("/profiles")

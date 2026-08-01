@@ -1,8 +1,10 @@
 """The batch pipeline: ingest → score (local) → escalate (paid, selective)
-→ human review → write (paid) → render.
+→ human review.
 
 Every LLM call here is single-shot and bounded: one job + one profile in,
-one JSON or document out. No loops, no accumulating context.
+one JSON out. No loops, no accumulating context. Application materials
+(resume/cover letter) are drafted by the applicant in a separate chat
+session, not by this pipeline.
 """
 import json
 import re
@@ -11,7 +13,7 @@ import time
 
 import httpx
 
-from . import db, llm, render, textclean
+from . import db, llm, textclean
 
 SCORE_SYSTEM = """You are a job-match evaluator. You receive an applicant profile
 (JSON) and one job posting. Score the match honestly — a mediocre match should
@@ -34,35 +36,6 @@ Output JSON (respect the word limits — output will be cut off if too long):
   "scam_risk": "none" | "low" | "medium" | "high",
   "criteria": {"<criterion name>": "assessment, max 12 words", ...}
 }"""
-
-WRITE_SYSTEM = """You are a professional resume and cover-letter writer.
-You receive an applicant profile (JSON), a job posting, and an evaluator's pitch.
-
-Rules:
-- NEVER invent credentials, employers, dates, or skills not in the profile.
-- If the profile has "base_resume_md", treat it as the authoritative source
-  document: tailor it (reorder, reword, trim, re-emphasize for this job) rather
-  than writing from scratch. Structured fields supplement it.
-- If the profile has a "contact" block, put it in the resume header; otherwise
-  leave a clearly-marked placeholder line like [CONTACT INFO].
-- Reframe honestly: emphasize the profile's real experience in the language of
-  this job's domain. Use any "framing_notes" in the profile.
-- A REVIEWER NOTE, if present, was written by the applicant when approving this
-  job. Treat it as authoritative supplemental profile information — it may add
-  real experience or context missing from the profile, and it overrides the
-  evaluator's pitch/concerns where they conflict.
-- Resume: reverse-chronological, tight bullet points, one page of content.
-- Cover letter: specific to this company and role, references why the match is
-  genuine (use the pitch), no generic filler, ~250 words.
-
-Output exactly two Markdown documents separated by marker lines, and nothing
-else — no JSON, no commentary before, between, or after:
-
-===RESUME===
-(the complete resume in Markdown)
-===COVER LETTER===
-(the complete cover letter in Markdown)"""
-
 
 def _kw_matches(kw: str, t: str) -> bool:
     """True if `kw` appears in lowercased title `t` as a whole token, not a
@@ -140,7 +113,7 @@ def _excluded_kw(title: str | None, profile: dict, company: str | None = None) -
 CLOSE_AFTER_MISSES = 2
 # Statuses worth tracking for closure: the ones the applicant is acting on.
 # Not 'applied' (already submitted — closure is just history) or dead states.
-_ACTIVE_STATUSES = ("pending_user_review", "shortlisted", "approved", "draft_created")
+_ACTIVE_STATUSES = ("pending_user_review", "shortlisted")
 
 
 def _mark(conn, row, closed: bool, reason: str) -> bool:
@@ -399,110 +372,6 @@ def evaluate_pending() -> int:
             RUN_STATUS.update(running=False, evaluated=done, finished_at=db.now(),
                                phase="stopped" if _STOP.is_set() else "done")
     return done
-
-
-def generate_documents(job_id: str):
-    """Called on approval. Writes resume + cover letter, renders HTML."""
-    with db.connect() as conn:
-        job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
-        if job is None:
-            return
-        profile = db.latest_profile(conn, job["applicant_id"])
-
-    user_msg = (
-        f"APPLICANT PROFILE:\n{json.dumps(profile, indent=1)}\n\n"
-        f"JOB POSTING:\nTitle: {job['title']}\nCompany: {job['company']}\n"
-        f"Location: {job['location']}\n\n{job['description']}\n\n"
-        f"EVALUATOR'S PITCH: {job['pitch']}\nCONCERNS: {job['concerns']}"
-    )
-    if job["notes"]:
-        user_msg += f"\nREVIEWER NOTE: {job['notes']}"
-    try:
-        text = llm.complete("write", WRITE_SYSTEM, user_msg, max_tokens=6000)
-        m = re.search(r"===\s*RESUME\s*===\s*(.*?)\s*===\s*COVER\s*LETTER\s*===\s*(.*)",
-                      text, re.DOTALL | re.IGNORECASE)
-        if not m:
-            raise llm.LLMError(
-                f"write output missing ===RESUME===/===COVER LETTER=== markers. "
-                f"Tail: ...{text[-200:]}")
-        docs = {"resume_md": m.group(1).strip(), "cover_letter_md": m.group(2).strip()}
-        with db.connect() as conn:
-            for kind in ("resume", "cover_letter"):
-                md = docs.get(f"{kind}_md")
-                if not md:
-                    continue
-                path_md, path_html = render.save(job, kind, md)
-                conn.execute(
-                    "INSERT INTO documents (id, job_id, kind, path_md, path_html, created_at)"
-                    " VALUES (?,?,?,?,?,?)",
-                    (db.new_id(), job_id, kind, path_md, path_html, db.now()),
-                )
-            conn.execute("UPDATE jobs SET status='draft_created' WHERE id=?", (job_id,))
-    except Exception as e:
-        with db.connect() as conn:
-            conn.execute("UPDATE jobs SET status='error', error=? WHERE id=?", (str(e)[:500], job_id))
-
-
-SCAFFOLD_SYSTEM = """You prepare a job-application FRAMING OUTLINE — not a resume, \
-not a cover letter. The applicant drafts the actual materials themselves (often
-iterating in a chat session); your outline is their reference and starting
-structure. Be specific to THIS job and THIS profile; never invent experience.
-
-Output a Markdown outline with exactly these sections:
-## Lead with
-The 2-4 profile items most relevant to this posting, and why each maps to it.
-## Framing per requirement
-For each significant requirement in the posting: the matching profile evidence
-and how to phrase it (honor the profile's framing_notes).
-## Gaps and mitigation
-Requirements the profile doesn't cover, and honest ways to address or defuse each.
-## Keywords
-Terms from the posting worth echoing verbatim in a resume/cover letter.
-## Cover letter angle
-2-3 sentences: the single strongest narrative connecting applicant to role.
-## Open questions
-Anything the applicant should verify or decide before applying.
-
-If a REVIEWER NOTE is present, treat it as authoritative supplemental profile
-information — it overrides the evaluator's pitch/concerns where they conflict."""
-
-
-def generate_scaffold(job_id: str):
-    """Cheap alternative to generate_documents: a framing outline the applicant
-    drafts from manually. Job stays shortlisted; the outline attaches as a doc."""
-    with db.connect() as conn:
-        job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
-        if job is None:
-            return
-        profile = db.latest_profile(conn, job["applicant_id"])
-
-    user_msg = (
-        f"APPLICANT PROFILE:\n{json.dumps(profile, indent=1)}\n\n"
-        f"JOB POSTING:\nTitle: {job['title']}\nCompany: {job['company']}\n"
-        f"Location: {job['location']}\n\n{job['description']}\n\n"
-        f"EVALUATOR'S PITCH: {job['pitch']}\nCONCERNS: {job['concerns']}"
-    )
-    if job["notes"]:
-        user_msg += f"\nREVIEWER NOTE: {job['notes']}"
-    try:
-        # Generous budget: reasoning models burn thinking tokens against it.
-        md = llm.complete("scaffold", SCAFFOLD_SYSTEM, user_msg, max_tokens=6000)
-        md = re.sub(r"<think>.*?</think>", "", md, flags=re.DOTALL).strip()
-        path_md, path_html = render.save(job, "scaffold", md)
-        with db.connect() as conn:
-            # Regenerating replaces the old outline instead of stacking copies.
-            conn.execute("DELETE FROM documents WHERE job_id=? AND kind='scaffold'", (job_id,))
-            conn.execute(
-                "INSERT INTO documents (id, job_id, kind, path_md, path_html, created_at)"
-                " VALUES (?,?,?,?,?,?)",
-                (db.new_id(), job_id, "scaffold", path_md, path_html, db.now()),
-            )
-            conn.execute("UPDATE jobs SET error=NULL WHERE id=?", (job_id,))
-    except Exception as e:
-        # Stay shortlisted so the card doesn't vanish; surface the error there.
-        with db.connect() as conn:
-            conn.execute("UPDATE jobs SET error=? WHERE id=?",
-                         (f"scaffold: {str(e)[:400]}", job_id))
 
 
 # Progress of the current/last full cycle, read by GET /run/status. Single

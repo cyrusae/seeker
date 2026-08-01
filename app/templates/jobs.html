@@ -100,10 +100,10 @@ function probeNow(btn) {
       onclick="return confirm('Re-evaluate selected jobs against current profiles? Thin descriptions are re-fetched from their URLs. Costs tokens.')">
       Re-evaluate selected</button>
     <button name="action" value="reject" class="reject"
-      onclick="return confirm('Reject selected jobs? They stay in the record (so polling won\'t re-add them) and count as negative signal for profile tuning. Approved/drafted/applied jobs are never touched.')">
+      onclick="return confirm('Reject selected jobs? They stay in the record (so polling won\'t re-add them) and count as negative signal for profile tuning. Applied jobs are never touched.')">
       Reject selected</button>
     <button name="action" value="delete" class="reject"
-      onclick="return confirm('Delete selected jobs (and any drafts) PERMANENTLY? Polled jobs will be re-added (and re-evaluated, costing tokens) on the next ingest — use Reject for those instead.')">
+      onclick="return confirm('Delete selected jobs PERMANENTLY? Polled jobs will be re-added (and re-evaluated, costing tokens) on the next ingest — use Reject for those instead.')">
       Delete selected</button>
   </div>
   <table>
@@ -125,7 +125,7 @@ function probeNow(btn) {
         {% if j['status'] in ('pending_user_review', 'skipped', 'error') %}
         <button form="f-shl-{{ j['id'] }}" class="subtle" title="park it on the Applications shortlist to work from">shortlist</button>
         {% endif %}
-        {% if j['status'] in ('pending_user_review', 'shortlisted', 'skipped', 'draft_created') %}
+        {% if j['status'] in ('pending_user_review', 'shortlisted', 'skipped') %}
         <button form="f-apd-{{ j['id'] }}" class="subtle" title="applied outside the pipeline — no LLM call">applied ✓</button>
         {% endif %}
         {% if j['status'] in ('pending_user_review','rejected','shortlisted','error','pending_eval','skipped','filtered') %}

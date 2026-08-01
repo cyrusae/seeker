@@ -16,12 +16,12 @@ from . import db, llm
 from .dedupe import _norm, _desc_sim
 
 # Status buckets for the Companies view filter. "review" = jobs ready for a
-# human decision; "shortlist" = the active pipeline you're still working
-# (shortlisted + in-pipeline drafts); "applied" (already submitted) and
-# "archived" (withdrawn) are opt-in layers. Pre-review noise (pending_eval,
-# filtered dupes, auto-skipped, plain rejects) never appears here.
+# human decision; "shortlist" = jobs you've confirmed interest in; "applied"
+# (already submitted) and "archived" (withdrawn) are opt-in layers. Pre-review
+# noise (pending_eval, filtered dupes, auto-skipped, plain rejects) never
+# appears here.
 _REVIEW = ("pending_user_review",)
-_SHORTLIST = ("shortlisted", "approved", "draft_created")
+_SHORTLIST = ("shortlisted",)
 _APPLIED = ("applied",)
 _ARCHIVED = ("archived",)
 

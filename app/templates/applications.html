@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Applications</h2>
+<form method="get" action="/applications" style="max-width: 16rem;">
+  <input type="hidden" name="tab" value="{{ tab }}">
+  <label>Applicant:
+    <select name="applicant" onchange="this.form.submit()">
+      <option value="">all</option>
+      {% for a in applicants %}
+      <option value="{{ a }}" {% if a == selected %}selected{% endif %}>{{ a }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</form>
+{% set back = '/applications?tab=' ~ tab ~ '&applicant=' ~ selected ~ ('&closed=1' if closed_filter else '') %}
+<p class="meta" style="display: flex; gap: 1rem; align-items: center;">
+  {% for t in ['shortlist', 'applied', 'archived'] %}
+  <a href="/applications?tab={{ t }}&applicant={{ selected }}"
+     style="{{ 'font-weight: 700; text-decoration: none;' if t == tab }}">
+    {{ t }} ({{ tab_counts[t] }})</a>
+  {% endfor %}
+  {% if closed_filter %}
+  <a href="/applications?tab={{ tab }}&applicant={{ selected }}" style="margin-left: auto; color: #c0392b; font-weight: 700;">✖ likely closed only — show all</a>
+  {% elif closed_count %}
+  <a href="/applications?tab={{ tab }}&applicant={{ selected }}&closed=1" style="margin-left: auto; color: #c0392b;">✖ {{ closed_count }} likely closed — filter</a>
+  {% endif %}
+</p>
+{% if tab == 'shortlist' and jobs %}
+<p class="meta">Usual flow: <strong>Copy listing</strong> → paste into a chat session to
+tailor materials → <strong>Applied ✓</strong>.</p>
+{% endif %}
+{% for j in jobs %}
+<div class="card">
+  {% set reasons = {'absent': 'no longer listed on its job board', '404': 'posting URL returns 404 (removed)', '410': 'posting URL returns 410 (removed)', 'expired-text': 'the posting page says it is closed/filled', 'manual': 'you marked this posting gone'} %}
+  <h3>{{ j['title'] }} @ {{ j['company'] or '?' }}
+    {% if j['closed_at'] %}<span title="likely closed — {{ reasons.get(j['closed_reason'], 'no longer available') }} (as of {{ j['closed_at'] }})" style="font-size: 0.7em; font-weight: 600; color: #c0392b; border: 1px solid currentColor; border-radius: 3px; padding: 0 0.3em; vertical-align: middle;">✖ likely closed</span>{% endif %}
+  </h3>
+  <div class="meta">{{ j['applicant_id'] }} · {{ j['created_at'] }}</div>
+  <p class="pitch"><strong>Why this one:</strong> {{ j['pitch'] }}</p>
+  {% if j['notes'] %}<p class="meta"><strong>Note:</strong> {{ j['notes'] }}</p>{% endif %}
+  {% if tab == 'archived' and j['feedback'] %}<p class="meta"><strong>Why archived:</strong> {{ j['feedback'] }}</p>{% endif %}
+  {% if tab == 'shortlist' and j['error'] %}<p class="meta" style="color: #c0392b;">⚠ {{ j['error'] }}</p>{% endif %}
+  {% if j['description'] %}
+  <details class="posting"><summary>full posting text</summary>
+    <div class="desc" id="desc-{{ j['id'] }}">{{ j['description'] }}</div>
+  </details>
+  {% endif %}
+  {% if tab == 'shortlist' %}
+  <div style="display: flex; gap: 0.4rem; margin: 0.3rem 0;">
+    <input type="text" id="dnote-{{ j['id'] }}" value="{{ j['notes'] or '' }}" style="flex: 1;"
+           placeholder="note, e.g. 'closes July 18th' / which resume you used">
+    <form method="post" action="/jobs/{{ j['id'] }}/note"
+          onsubmit="this.note.value = document.getElementById('dnote-{{ j['id'] }}').value">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="subtle" title="save this note without moving the job — stays on the shortlist">Save note</button>
+    </form>
+  </div>
+  {% endif %}
+  <div class="actions">
+    {% if j['closed_at'] %}
+    <form method="post" action="/jobs/{{ j['id'] }}/unflag">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button title="the probe was wrong — this posting is still open. Clears the flag and stops auto-flagging this job.">↺ Not closed — clear flag</button>
+    </form>
+    {% elif tab == 'shortlist' %}
+    <form method="post" action="/jobs/{{ j['id'] }}/close">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button title="the posting is gone (dead link / filled) — archives it as closed. Not counted as a bad-match signal for profile tuning.">✖ Job no longer exists</button>
+    </form>
+    {% endif %}
+    {% if j['url'] %}<a class="btn" href="{{ j['url'] }}" target="_blank">{{ 'Posting' if tab == 'shortlist' else 'Apply' }} ↗</a>{% endif %}
+    {% if j['description'] %}
+    <button type="button" onclick="copyListing(this, 'desc-{{ j['id'] }}')"
+            title="copy title + full posting text, for pasting into a chat session">Copy listing</button>
+    {% endif %}
+    {% if tab == 'shortlist' %}
+    <form method="post" action="/jobs/{{ j['id'] }}/applied"
+          onsubmit="this.note.value = document.getElementById('dnote-{{ j['id'] }}').value">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="approve">Applied ✓</button>
+    </form>
+    <form method="post" action="/jobs/{{ j['id'] }}/archive"
+          onsubmit="this.feedback.value = document.getElementById('dnote-{{ j['id'] }}').value">
+      <input type="hidden" name="feedback" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="reject" title="changed my mind — moves to the archived tab; counts as negative signal for profile tuning">Archive</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+{% if tab == 'shortlist' %}
+<p>Shortlist is empty — hit <strong>Shortlist ★</strong> on good matches in
+   <a href="/">Review</a> and work through them here.</p>
+{% else %}
+<p>Nothing {{ tab }} yet.</p>
+{% endif %}
+{% endfor %}
+<script>
+function copyListing(btn, descId) {
+  const title = btn.closest('.card').querySelector('h3').textContent.trim();
+  const body = document.getElementById(descId).textContent.trim();
+  copyText(title + '\n\n' + body).then(() => {
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => { btn.textContent = 'Copy listing'; }, 1500);
+  }).catch(() => { btn.textContent = 'Copy failed'; });
+}
+</script>
+{% endblock %}

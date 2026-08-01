@@ -15,8 +15,7 @@
   {{ counts.get('pending_user_review', 0) }} for review ·
   <a href="/jobs?status=skipped">{{ counts.get('skipped', 0) }} auto-skipped</a> ·
   <a href="/jobs?status=filtered">{{ counts.get('filtered', 0) }} keyword-filtered</a> ·
-  <a href="/drafts?tab=shortlist">{{ counts.get('shortlisted', 0) }} shortlisted</a> ·
-  {{ counts.get('draft_created', 0) }} drafted ·
+  <a href="/applications?tab=shortlist">{{ counts.get('shortlisted', 0) }} shortlisted</a> ·
   <a href="/usage">{{ counts.get('error', 0) }} errors</a></span>
 </p>
 {% if counts.get('pending_user_review', 0) or counts.get('skipped', 0) or counts.get('filtered', 0) %}
@@ -69,9 +68,9 @@
     <div class="desc" id="rdesc-{{ j['id'] }}">{{ j['description'] }}</div>
   </details>
   {% endif %}
-  <input type="text" name="note" id="note-{{ j['id'] }}" form="ap-{{ j['id'] }}"
+  <input type="text" name="note" id="note-{{ j['id'] }}"
          value="{{ j['notes'] or '' }}"
-         placeholder="optional note to future-you — context the eval missed, kept with the job for scaffolding/drafting later"
+         placeholder="optional note to future-you — context the eval missed, kept with the job"
          style="width: 100%; margin: 0.3rem 0;">
   <div class="actions">
     <form method="post" action="/jobs/{{ j['id'] }}/shortlist"
@@ -93,16 +92,7 @@
     <form method="post" action="/jobs/{{ j['id'] }}/applied"
           onsubmit="this.note.value = document.getElementById('note-{{ j['id'] }}').value">
       <input type="hidden" name="note" value="">
-      <button class="subtle" title="applied outside the pipeline (reused a resume, drafted elsewhere) — records a positive signal, no LLM call">applied elsewhere ✓</button>
-    </form>
-    <form method="post" action="/jobs/{{ j['id'] }}/scaffold"
-          onsubmit="this.note.value = document.getElementById('note-{{ j['id'] }}').value">
-      <input type="hidden" name="note" value="">
-      <input type="hidden" name="redirect" value="/">
-      <button class="subtle" title="shortlists it AND queues a cheap outline (what to lead with, framing per requirement, gaps, keywords) — take it to a chat session">shortlist + scaffold</button>
-    </form>
-    <form method="post" action="/jobs/{{ j['id'] }}/approve" id="ap-{{ j['id'] }}">
-      <button class="subtle" title="skip the shortlist and draft resume + cover letter now (WRITE tier — the expensive model)">draft materials now</button>
+      <button class="subtle" title="applied outside the pipeline — records a positive signal, no LLM call">applied elsewhere ✓</button>
     </form>
     <form method="post" action="/jobs/{{ j['id'] }}/reevaluate">
       <input type="hidden" name="redirect" value="/">

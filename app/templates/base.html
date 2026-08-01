@@ -34,7 +34,7 @@ nav .brand { font-weight: 800; letter-spacing: 0.05em; opacity: 0.6; }
 .badge.st-error { color: var(--bad); border-color: var(--bad); }
 .badge.st-pending_extract, .badge.st-pending_eval { color: var(--warn); border-color: var(--warn); }
 .badge.st-pending_user_review { color: var(--ok); border-color: var(--ok); }
-.badge.st-draft_created, .badge.st-applied { color: var(--ok); border-color: var(--ok); font-weight: 700; }
+.badge.st-applied { color: var(--ok); border-color: var(--ok); font-weight: 700; }
 .actions { display: flex; gap: 0.5rem; margin-top: 0.6rem; flex-wrap: wrap; align-items: stretch; }
 button, .btn { padding: 0.55rem 1.1rem; border-radius: 6px; border: 1px solid #8886;
          cursor: pointer; font-size: 0.95rem; background: var(--card-bg);
@@ -65,7 +65,7 @@ details.posting .desc { max-height: 22rem; overflow-y: auto; font-size: 0.88rem;
 <nav>
   <span class="brand">SEEKER</span>
   <a href="/" {% if path == '/' %}class="here"{% endif %}>Review</a>
-  <a href="/drafts" {% if path.startswith('/drafts') or path.startswith('/doc') %}class="here"{% endif %}>Applications</a>
+  <a href="/applications" {% if path.startswith('/applications') %}class="here"{% endif %}>Applications</a>
   <a href="/jobs" {% if path.startswith('/jobs') %}class="here"{% endif %}>Jobs</a>
   <a href="/companies" {% if path.startswith('/companies') %}class="here"{% endif %}>Companies</a>
   <a href="/submit" {% if path.startswith('/submit') %}class="here"{% endif %}>Submit</a>

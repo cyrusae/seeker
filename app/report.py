@@ -11,8 +11,7 @@ REQUIRED_PROFILE_KEYS = {"applicant_id", "name", "profile", "criteria"}
 
 
 def tuning_report(applicant_id: str) -> str:
-    reviewed = ("('approved','rejected','draft_created','shortlisted',"
-                "'applied','archived')")
+    reviewed = "('rejected','shortlisted','applied','archived')"
     # A job archived because its posting closed carries no match-quality signal
     # — it must not read as an ARCHIVED-AFTER-INTEREST miss. Only manual-close
     # ever sets closed_at on an archived row (the sweep skips archived jobs), so
@@ -62,10 +61,9 @@ def tuning_report(applicant_id: str) -> str:
     out.append("\n## Reviewed jobs since this version (model score vs. your decision)\n")
     for j in jobs:
         decision = ("APPLIED" if j["status"] == "applied"
-                    else "APPROVED" if j["status"] in ("approved", "draft_created")
                     else "SHORTLISTED" if j["status"] == "shortlisted"
-                    # archived = shortlisted/drafted first, then withdrawn — a
-                    # late change of mind, stronger miss signal than a reject
+                    # archived = shortlisted first, then withdrawn — a late
+                    # change of mind, stronger miss signal than a reject
                     else "ARCHIVED-AFTER-INTEREST" if j["status"] == "archived"
                     else "REJECTED")
         out.append(f"### [{decision}] {j['title']} — {j['company']} (scored {j['score']})")
@@ -77,6 +75,6 @@ def tuning_report(applicant_id: str) -> str:
     out.append("## Instructions for the refinement session\n")
     out.append("Paste this whole report into a chat session along with "
                "docs/interview_spec.md. Ask for a revised profile JSON that better "
-               "predicts the APPROVED/REJECTED decisions above — especially where "
+               "predicts the SHORTLISTED/REJECTED decisions above — especially where "
                "the model's score disagreed with the human decision.")
     return "\n".join(out)

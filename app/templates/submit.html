@@ -42,12 +42,6 @@ used for extraction and the URL is kept as the application link.</p>
       <button class="approve" title="parks it on the Applications shortlist to work from">Shortlist ★</button>
     </form>
     {% endif %}
-    {% if j['status'] in ('pending_user_review', 'shortlisted') %}
-    <form method="post" action="/jobs/{{ j['id'] }}/approve">
-      <input type="hidden" name="redirect" value="/submit">
-      <button class="subtle" title="skip the shortlist and draft in-pipeline (WRITE tier)">draft materials</button>
-    </form>
-    {% endif %}
     {% if j['status'] == 'error' %}
     <form method="post" action="/jobs/{{ j['id'] }}/retry">
       <input type="hidden" name="redirect" value="/submit">

@@ -31,7 +31,7 @@
   </details>
   {% endif %}
   <input type="text" id="cnote-{{ j.id }}" value="{{ j.notes or '' }}"
-         placeholder="note — kept with the job (context for drafting, 'closes July 18th', which resume you used)"
+         placeholder="note — kept with the job ('closes July 18th', which resume you used)"
          style="width: 100%; margin: 0.4rem 0;">
   <div class="actions">
     {% if j.url %}<a class="btn" href="{{ j.url }}" target="_blank">Posting ↗</a>{% endif %}
@@ -39,9 +39,6 @@
     <button type="button" onclick="copyListing(this, 'cardesc-{{ j.id }}')"
             title="copy title + full posting text, for pasting into a chat session">Copy listing</button>
     {% endif %}
-    {% for d in docs %}
-    <a class="btn" href="/doc/{{ d.id }}" target="_blank">{{ d.kind.replace('_', ' ') }} ↗</a>
-    {% endfor %}
     <form method="post" action="/jobs/{{ j.id }}/note"
           onsubmit="this.note.value = document.getElementById('cnote-{{ j.id }}').value">
       <input type="hidden" name="note" value="">
@@ -56,18 +53,12 @@
       <button class="approve" title="good match — parks it on the Applications shortlist">Shortlist ★</button>
     </form>
     {% endif %}
-    {% if j.status in ('pending_user_review', 'shortlisted', 'approved', 'draft_created') %}
+    {% if j.status in ('pending_user_review', 'shortlisted') %}
     <form method="post" action="/jobs/{{ j.id }}/applied"
           onsubmit="this.note.value = document.getElementById('cnote-{{ j.id }}').value">
       <input type="hidden" name="note" value="">
       <input type="hidden" name="redirect" value="{{ back }}">
       <button class="approve">Applied ✓</button>
-    </form>
-    <form method="post" action="/jobs/{{ j.id }}/scaffold"
-          onsubmit="this.note.value = document.getElementById('cnote-{{ j.id }}').value">
-      <input type="hidden" name="note" value="">
-      <input type="hidden" name="redirect" value="{{ back }}">
-      <button class="subtle" title="cheap framing outline — take it to a chat session (job stays/gets shortlisted)">Scaffold</button>
     </form>
     <form method="post" action="/jobs/{{ j.id }}/archive"
           onsubmit="this.feedback.value = document.getElementById('cnote-{{ j.id }}').value">
