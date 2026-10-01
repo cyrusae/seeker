@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     -- pending_extract | pending_eval | filtered | pending_user_review | skipped
     -- | rejected | shortlisted | applied | error
     -- | archived (was shortlisted, then withdrawn by the user)
+    -- | stale (dismissed from review as closed or too old; not a tuning signal)
     score INTEGER,
     pitch TEXT,
     concerns TEXT,
@@ -136,6 +137,12 @@ def init_db():
             conn.execute("ALTER TABLE jobs ADD COLUMN missed_count INTEGER NOT NULL DEFAULT 0")
         if "closure_dismissed" not in cols:
             conn.execute("ALTER TABLE jobs ADD COLUMN closure_dismissed INTEGER NOT NULL DEFAULT 0")
+        if "last_seen_at" not in cols:
+            # Last time a source listing (or a direct-URL liveness check) showed
+            # the posting still up. Existing rows start at first-seen — the
+            # most recent sighting we can actually vouch for.
+            conn.execute("ALTER TABLE jobs ADD COLUMN last_seen_at TEXT")
+            conn.execute("UPDATE jobs SET last_seen_at = created_at")
 
 
 # --- profiles ---------------------------------------------------------------
@@ -179,20 +186,29 @@ def insert_job(conn, **f) -> str | None:
         conn.execute(
             """INSERT INTO jobs (id, applicant_id, source, dedupe_key, url, title,
                  company, location, salary, description, status, similar_to,
-                 poll_source, error, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 poll_source, error, created_at, last_seen_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 jid, f["applicant_id"], f["source"], f["dedupe_key"],
                 f.get("url"), f.get("title"), f.get("company"), f.get("location"),
                 f.get("salary"), f.get("description"),
                 f.get("status", "pending_eval"), f.get("similar_to"),
                 # _source is the adapter name tagged on by fetch_for_profile
-                f.get("_source"), f.get("error"), now(),
+                f.get("_source"), f.get("error"), now(), now(),
             ),
         )
         return jid
     except sqlite3.IntegrityError:
         return None
+
+
+def touch_seen(conn, applicant_id: str, keys) -> None:
+    """Stamp last_seen_at=now on stored jobs whose dedupe key a source just
+    listed again — evidence the posting is still being advertised."""
+    ts = now()
+    conn.executemany(
+        "UPDATE jobs SET last_seen_at=? WHERE applicant_id=? AND dedupe_key=?",
+        [(ts, applicant_id, k) for k in keys])
 
 
 def monthly_spend(conn) -> float:

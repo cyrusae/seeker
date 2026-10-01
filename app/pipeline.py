@@ -218,6 +218,12 @@ def ingest_all() -> tuple[int, int]:
                                            "location": job.get("location"),
                                            "description": job.get("description"),
                                            "url": job.get("url"), "source": "poll"})
+            # Jobs we already had that a source listed again this cycle are
+            # still being advertised — refresh their last-seen stamp. (Scraper
+            # adapters skip known keys before yielding, so for those the
+            # liveness probe is what refreshes it.)
+            db.touch_seen(conn, applicant_id,
+                          {j["dedupe_key"] for j in scan if j["dedupe_key"] in seen})
             closed += _sweep_closed(conn, applicant_id, scan)
     return added, closed
 
@@ -471,6 +477,14 @@ _CLOSED_PHRASES = (
 )
 
 
+_AGGREGATOR_HOSTS = ("adzuna.",)
+
+
+def _is_aggregator(url: str) -> bool:
+    host = httpx.URL(url).host.lower()
+    return any(h in host for h in _AGGREGATOR_HOSTS)
+
+
 def _liveness_verdict(url: str) -> tuple[bool | None, str]:
     """GET the posting. Returns (closed?, reason). closed=None means we couldn't
     tell (network error, 403/429/5xx) — the caller must leave state untouched
@@ -513,6 +527,12 @@ def probe_liveness() -> int:
                 continue             # inconclusive — don't touch missed_count
             with db.connect() as conn:
                 closed += _mark(conn, r, verdict, reason)
+                # A live direct posting page confirms the job is still up. An
+                # aggregator landing page (Adzuna) tends to stay live after
+                # the real posting closes, so it doesn't count.
+                if verdict is False and not _is_aggregator(r["url"]):
+                    conn.execute("UPDATE jobs SET last_seen_at=? WHERE id=?",
+                                 (db.now(), r["id"]))
             time.sleep(0.5)          # politeness: their site, our schedule
     except Exception:
         notify.ping_liveness(ok=False)

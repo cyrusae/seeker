@@ -102,6 +102,9 @@ function probeNow(btn) {
     <button name="action" value="reject" class="reject"
       onclick="return confirm('Reject selected jobs? They stay in the record (so polling won\'t re-add them) and count as negative signal for profile tuning. Applied jobs are never touched.')">
       Reject selected</button>
+    <button name="action" value="restore"
+      onclick="return confirm('Restore selected stale jobs to the review queue? Marks them as seen open today. Only affects jobs with status stale.')">
+      Restore stale to review</button>
     <button name="action" value="delete" class="reject"
       onclick="return confirm('Delete selected jobs PERMANENTLY? Polled jobs will be re-added (and re-evaluated, costing tokens) on the next ingest — use Reject for those instead.')">
       Delete selected</button>
@@ -128,7 +131,7 @@ function probeNow(btn) {
         {% if j['status'] in ('pending_user_review', 'shortlisted', 'skipped') %}
         <button form="f-apd-{{ j['id'] }}" class="subtle" title="applied outside the pipeline — no LLM call">applied ✓</button>
         {% endif %}
-        {% if j['status'] in ('pending_user_review','rejected','shortlisted','error','pending_eval','skipped','filtered') %}
+        {% if j['status'] in ('pending_user_review','rejected','shortlisted','error','pending_eval','skipped','filtered','stale') %}
         <button form="f-rev-{{ j['id'] }}" class="subtle">re-eval</button>
         {% endif %}
       </td>

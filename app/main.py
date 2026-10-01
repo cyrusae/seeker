@@ -39,6 +39,36 @@ def _money(s):
 templates.env.filters["money"] = _money
 
 
+def _days_ago(ts: str | None) -> int | None:
+    """Whole days between an ISO timestamp and now (None if missing/garbled)."""
+    if not ts:
+        return None
+    try:
+        then = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    return max(0, (datetime.now(timezone.utc) - then).days)
+
+
+templates.env.filters["days_ago"] = _days_ago
+
+
+def _freshness(j) -> str:
+    """Review-queue bucket: 'stale' (flagged closed, or no source has listed it
+    in STALE_AFTER_DAYS), 'recent' (listed within RECENT_SEEN_DAYS), else
+    'aging'. last_seen_at falls back to created_at for safety."""
+    if j["closed_at"]:
+        return "stale"
+    seen = _days_ago(j["last_seen_at"] or j["created_at"])
+    if seen is None:
+        return "aging"
+    if seen >= settings.stale_after_days:
+        return "stale"
+    return "recent" if seen < settings.recent_seen_days else "aging"
+
+
 def _resume_interrupted():
     """A restart (or --reload picking up a file edit) kills in-flight background
     tasks. Pick the queue back up: everything still waiting for an eval."""
@@ -132,8 +162,11 @@ def _remember_applicant(request: Request, resp, applicant: str):
     return resp
 
 
+REVIEW_SORTS = {"fit": "best fit first", "newest": "newest first", "oldest": "oldest first"}
+
+
 @app.get("/")
-def review(request: Request, applicant: str = ""):
+def review(request: Request, applicant: str = "", view: str = "", sort: str = "fit"):
     applicant = _sticky_applicant(request, applicant)
     with db.connect() as conn:
         # self-join pulls the near-duplicate's title/status for the ⚠ line
@@ -153,8 +186,39 @@ def review(request: Request, applicant: str = ""):
         counts = {r["status"]: r["n"] for r in
                   conn.execute(cq + " GROUP BY status", cargs)}
         names = _applicants(conn)
+    # Split the queue by how recently a source last showed the posting, so a
+    # backlog built up over weeks unattended doesn't bury live jobs under
+    # ones that have probably been filled. Score order is kept within each.
+    if sort not in REVIEW_SORTS:
+        sort = "fit"
+    if sort != "fit":  # age = first seen; SQL already gave score order
+        jobs = sorted(jobs, key=lambda j: j["created_at"] or "", reverse=(sort == "newest"))
+    buckets = {"recent": [], "aging": [], "stale": []}
+    for j in jobs:
+        buckets[_freshness(j)].append(j)
+    rd, sd = settings.recent_seen_days, settings.stale_after_days
+    if view == "stale":
+        sections = [
+            ("Likely closed", "The board stopped listing these, or the posting URL "
+             "says they're gone.", [j for j in buckets["stale"] if j["closed_at"]]),
+            (f"Not seen in {sd}+ days", "No closure signal, but no source has listed "
+             "these in a long time. Check the posting before spending time on one.",
+             [j for j in buckets["stale"] if not j["closed_at"]]),
+        ]
+    else:
+        view = ""
+        sections = [
+            ("Seen recently", f"A source listed these within the last {rd} days.",
+             buckets["recent"]),
+            ("Not seen recently", f"Last listed {rd}–{sd} days ago. May still be "
+             "open, especially from search sources that only re-list what matches "
+             "today's query.", buckets["aging"]),
+        ]
     resp = templates.TemplateResponse(request, "review.html", {
-        "jobs": jobs, "counts": counts, "applicants": names, "selected": applicant,
+        "sections": sections, "view": view, "stale_count": len(buckets["stale"]),
+        "sort": sort, "sorts": REVIEW_SORTS,
+        "live_count": len(buckets["recent"]) + len(buckets["aging"]),
+        "counts": counts, "applicants": names, "selected": applicant,
     })
     return _remember_applicant(request, resp, applicant)
 
@@ -243,7 +307,7 @@ def submit(background: BackgroundTasks, applicant_id: str = Form(...),
 
 
 REEVAL_OK = {"pending_user_review", "rejected", "shortlisted", "error", "pending_eval",
-             "skipped", "filtered", "archived"}
+             "skipped", "filtered", "archived", "stale"}
 
 
 @app.get("/jobs")
@@ -327,7 +391,7 @@ def jobs_bulk(background: BackgroundTasks, action: str = Form(...),
             conn.execute(
                 f"""UPDATE jobs SET status='rejected', reviewed_at=? WHERE id IN ({marks})
                     AND status IN ('pending_extract','pending_eval','pending_user_review',
-                                   'skipped','shortlisted','error','filtered','archived')""",
+                                   'skipped','shortlisted','error','filtered','archived','stale')""",
                 [db.now(), *job_ids])
         elif action == "reevaluate":
             conn.execute(
@@ -335,8 +399,18 @@ def jobs_bulk(background: BackgroundTasks, action: str = Form(...),
                     pitch=NULL, concerns=NULL, scam_risk=NULL, eval_json=NULL, escalated=0
                     WHERE id IN ({marks}) AND status IN
                     ('pending_user_review','rejected','shortlisted','error','pending_eval',
-                     'skipped','filtered','archived')""",
+                     'skipped','filtered','archived','stale')""",
                 job_ids)
+        elif action == "restore":
+            # Undo a stale dismissal: you've checked and it's still open, so
+            # it counts as a fresh sighting (otherwise its age would drop it
+            # straight back into the stale view).
+            conn.execute(
+                f"""UPDATE jobs SET status='pending_user_review', reviewed_at=NULL,
+                    closed_at=NULL, closed_reason=NULL, missed_count=0,
+                    closure_dismissed=1, last_seen_at=?
+                    WHERE id IN ({marks}) AND status='stale'""",
+                [db.now(), *job_ids])
     if action == "reevaluate":
         pipeline.clear_stop()  # explicit re-evaluate overrides a prior stop
         background.add_task(pipeline.evaluate_pending)
@@ -389,7 +463,40 @@ def unflag_closed(job_id: str, redirect: str = Form("/applications?tab=shortlist
     sweep nor the URL probe re-flags this job."""
     with db.connect() as conn:
         conn.execute("UPDATE jobs SET closed_at=NULL, closed_reason=NULL, "
-                     "missed_count=0, closure_dismissed=1 WHERE id=?", (job_id,))
+                     "missed_count=0, closure_dismissed=1, last_seen_at=? WHERE id=?",
+                     (db.now(), job_id))
+    return RedirectResponse(redirect, status_code=303)
+
+
+def _set_stale(conn, job_ids: list[str], reason: str) -> None:
+    """Move review-queue jobs to status 'stale': gone or too old to bother with.
+    Its own status (not 'archived' or 'rejected') so it stays out of the
+    Applications archived tab and out of profile tuning — a dead posting says
+    nothing about match quality. Keeps any existing closure reason; otherwise
+    records why it was dismissed ('manual' = you saw it's gone, 'stale' = old)."""
+    if not job_ids:
+        return
+    now = db.now()
+    marks = ",".join("?" * len(job_ids))
+    conn.execute(
+        f"""UPDATE jobs SET status='stale', reviewed_at=?,
+            closed_at=COALESCE(closed_at, ?), closed_reason=COALESCE(closed_reason, ?),
+            closure_dismissed=1
+            WHERE id IN ({marks}) AND status IN ('pending_user_review','skipped')""",
+        [now, now, reason, *job_ids])
+
+
+@app.post("/jobs/{job_id}/stale")
+def mark_stale(job_id: str, reason: str = Form("manual"), redirect: str = Form("/")):
+    with db.connect() as conn:
+        _set_stale(conn, [job_id], "stale" if reason == "stale" else "manual")
+    return RedirectResponse(redirect, status_code=303)
+
+
+@app.post("/review/stale")
+def bulk_stale(job_ids: list[str] = Form([]), redirect: str = Form("/?view=stale")):
+    with db.connect() as conn:
+        _set_stale(conn, job_ids, "stale")
     return RedirectResponse(redirect, status_code=303)
 
 

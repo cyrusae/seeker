@@ -62,6 +62,11 @@ class Settings:
     # Pipeline knobs
     escalate_min_score: int = int(_env("ESCALATE_MIN_SCORE", "55"))
     review_min_score: int = int(_env("REVIEW_MIN_SCORE", "50"))  # below → auto-skip
+    # Review-queue freshness. A job counts as "seen recently" if a source
+    # listed it (or its direct URL checked out) within RECENT_SEEN_DAYS;
+    # unseen for STALE_AFTER_DAYS or more, it moves to the stale view.
+    recent_seen_days: int = int(_env("RECENT_SEEN_DAYS", "7"))
+    stale_after_days: int = int(_env("STALE_AFTER_DAYS", "45"))
     monthly_budget_usd: float = float(_env("MONTHLY_BUDGET_USD", "10"))
     budget_fallback_to_local: bool = _env("BUDGET_FALLBACK_TO_LOCAL", "true").lower() == "true"
     pipeline_hour: int = int(_env("PIPELINE_HOUR", "2"))  # local time, daily
