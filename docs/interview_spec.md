@@ -5,9 +5,21 @@ capable model (Claude, Gemini, whatever). It will interview the applicant and
 produce a profile JSON. Save that JSON to `profiles/<name>.json` and run
 `python cli.py import-profile profiles/<name>.json`.
 
-For **refinement** (not first-time): also paste the output of
-`python cli.py tuning-report <applicant_id>` and ask for a revised profile
-that better predicts the approve/reject decisions in the report.
+There are three modes; tell the model which one you want:
+
+- **New profile:** paste this document alone. The model interviews from scratch.
+- **Full review:** paste this document and the output of
+  `python cli.py tuning-report <applicant_id>` (or Profiles → download), which
+  includes the current profile JSON. Use this when a lot has changed or it's been a while: the model
+  re-checks every section with the applicant *and* uses the report's evidence.
+- **Tune:** same inputs as Full review, but only adjust criteria the report
+  shows misbehaving; don't revisit the rest.
+
+Operator notes (not for the interviewing model): import the result with
+`cli.py import-profile` or Profiles → Import. A new profile version changes
+what the Jev gate is asked, so afterwards refit on Profiles → Gate with
+"first ask Jev about decisions with no answers" checked (~$0.40), and use
+Rescore on the Review page if unreviewed jobs should be re-judged.
 
 ---
 
@@ -39,7 +51,64 @@ Rules:
    yourself from their answers, and have them confirm it.
 7. Collect contact info for the resume header (name, city, email, phone —
    whatever they're comfortable including) into `contact`.
-8. When done, output ONLY the JSON below, complete and valid.
+8. When done, output ONLY the JSON below, complete and valid. In Full review
+   and Tune modes, then add a short changelog after the JSON: each change and
+   the evidence behind it.
+
+### Full review mode
+
+Work through the existing profile section by section with the applicant
+rather than starting over. For each section, show what's there and ask what's
+changed: situation (school, schedule, location), experience gained since the
+last version (years of experience and skills drift upward), salary
+expectations, and what they've learned about what they actually want from
+applying. Then go through the criteria using the tuning report:
+
+- **Each hard filter and anti-criterion:** "If a job were great otherwise,
+  would this alone make it a no?" Yes → dealbreaker (plain string). "Usually,
+  but I'd stretch" → `{"text": ..., "severity": "penalty"}`. Check the report's
+  "How each criterion behaves" table: a dealbreaker that fires on kept jobs is
+  either too broad (reword it) or not really a dealbreaker (make it a penalty).
+- **Each soft preference:** compare how often it fires on kept vs rejected
+  jobs. One that fires about equally on both isn't helping. Ask whether it's
+  really a preference, or re-phrase it to name what actually distinguishes the
+  jobs they keep. A high-weight preference that fires more on *rejected* jobs
+  deserves a direct question.
+- **The undervalued and rejected-anyway sections:** look for patterns the
+  profile doesn't express. Propose new criteria for them, and confirm each one
+  with the applicant before adding it.
+
+Keep `base_resume_md` and work history accurate but don't rewrite them unless
+asked; the review is mainly about criteria. Carry `sources` and `prefilter`
+over as they are unless the applicant raises them.
+
+### Tune mode
+
+Change only criteria the tuning report shows misbehaving, using the same tests
+as Full review. Ask before each change. Leave everything else untouched.
+
+### Writing criteria (all modes)
+
+An automated gate turns **each** `hard_filters` entry, `anti_criteria` item and
+`soft_preferences` item into its own yes/no question about a job posting
+("Does this job fall into: <item>?"). It reads the item literally and sees
+nothing else from the conversation. So:
+
+- **One condition per item.** "Roles incompatible with evening classes (e.g.
+  rigid schedules, relocation, full-time travel)" is three questions in one;
+  split it, or keep only the part that matters.
+- **Phrase it as something a posting could explicitly say:** "Requires an
+  active security clearance", not "government-ish roles".
+- **Describe the job, not the scoring.** Instructions like "score near zero"
+  or "surface these rather than down-ranking" mean nothing to a yes/no
+  question; the severity and weight fields carry that.
+- **Don't repeat an item across sections.** The same condition as a hard
+  filter and an anti-criterion is counted twice.
+- **Soft preferences need to separate good jobs from bad ones.** Something
+  nearly every posting in their field has ("interesting problems") won't
+  help rank anything. Name what's specific about the jobs they want.
+- `target_roles` drive a "how closely does the main work match?" judgment, so
+  list role *types* with seniority ("Data Engineer (Associate / I / II)").
 
 ## Output schema
 
