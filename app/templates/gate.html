@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Gate model</h2>
+<p class="meta"><a href="/profiles">← Profiles</a> · A refit relearns how the gate weighs
+  Jev's answers (not the questions themselves) from the jobs you've kept and rejected,
+  and picks thresholds so the gloss covers
+  {{ (candidate.stats.recall_targets.gloss * 100) | round | int if candidate else 95 }}% of jobs you'd keep.
+  Nothing changes until you apply it.</p>
+
+{% if fit_status.running %}
+<meta http-equiv="refresh" content="3">
+<div class="card"><p>⏳ Refit running: {{ fit_status.msg }}</p></div>
+{% elif fit_status.error %}
+<div class="card"><p style="color: var(--bad);">Last refit failed: {{ fit_status.error }}</p></div>
+{% endif %}
+
+{% if candidate %}
+{% set st = candidate.stats %}
+<div class="card">
+  <h3>Candidate v{{ candidate.version }} <span class="meta">fit {{ candidate.created_at[:16].replace('T', ' ') }}</span></h3>
+  {% for w in st.warnings %}<p style="color: var(--warn);">⚠ {{ w }}</p>{% endfor %}
+  <p>Learned from <strong>{{ st.n_labels }}</strong> decisions ({{ st.n_pos }} kept;
+    {{ st.n_vetoed }} vetoed by a dealbreaker and left out of the fit).</p>
+  <table>
+    <tr><th></th><th>current v{{ st.current_version }}</th><th>candidate</th></tr>
+    <tr><td>ranking quality (AUC)</td>
+      <td>{{ '%.3f' % st.auc_current if st.auc_current is not none else '–' }}</td>
+      <td><strong>{{ '%.3f' % st.auc_candidate if st.auc_candidate is not none else '–' }}</strong></td></tr>
+    <tr><td>gloss threshold</td><td>{{ active.thresholds.gloss_min }}</td>
+      <td><strong>{{ candidate.thresholds.gloss_min }}</strong></td></tr>
+    <tr><td>review floor</td><td>{{ active.thresholds.review_min }}</td>
+      <td><strong>{{ candidate.thresholds.review_min }}</strong></td></tr>
+  </table>
+  <p class="meta">AUC = chance a job you kept outranks one you rejected (0.5 = coin flip).
+    Candidate scores are cross-validated, so it isn't grading its own homework.</p>
+
+  <h4>What would move in your unreviewed jobs</h4>
+  {% if st.moves %}
+  <ul>{% for k, n in st.moves.items() %}<li>{{ n }} job{{ 's' if n != 1 }}: {{ k.replace('→', ' → ') }}</li>{% endfor %}</ul>
+  {% else %}
+  <p class="meta">Nothing changes bucket{% if not st.n_unreviewed_scored %} (no unreviewed jobs have gate scores yet; turn on GATE_MODE=shadow){% endif %}.</p>
+  {% endif %}
+
+  <h4>Recall at each threshold</h4>
+  <table>
+    <tr><th>score ≥</th>{% for r in st.table %}<th>{{ r.t }}</th>{% endfor %}</tr>
+    <tr><td>kept jobs above</td>{% for r in st.table %}<td>{{ r.recall }}%</td>{% endfor %}</tr>
+    <tr><td>rejects below</td>{% for r in st.table %}<td>{{ r.culled }}%</td>{% endfor %}</tr>
+  </table>
+
+  {% if st.dealbreaker_flags %}
+  <h4>Dealbreakers that fire on jobs you kept</h4>
+  <p class="meta">These veto jobs outright, yet you kept some anyway. Either the wording
+    is too broad or it isn't really a dealbreaker; consider marking it
+    <code>"severity": "penalty"</code> in your next profile version.</p>
+  <ul>{% for f in st.dealbreaker_flags %}
+    <li><strong>{{ f.applicant }}</strong>: fired on {{ f.kept }} kept ({{ f.kept_pct }}%)
+      vs {{ f.rejected }} rejected — {{ f.item }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  <details><summary class="meta">weights</summary>
+    <table>{% for k, v in candidate.weights.items() %}<tr><td>{{ k }}</td><td>{{ '%+.2f' % v }}</td>
+      <td class="meta">{{ '(current %+.2f)' % active.weights.get(k, 0) }}</td></tr>{% endfor %}
+      {% for a, v in candidate.applicant_bias.items() %}<tr><td>bias: {{ a }}</td><td>{{ '%+.2f' % v }}</td><td></td></tr>{% endfor %}
+    </table>
+  </details>
+
+  <div class="actions" style="margin-top: 0.8rem;">
+    <form method="post" action="/gate/{{ candidate.version }}/apply"
+          onsubmit="return confirm('Apply v{{ candidate.version }}? Gate scores are recomputed from cached answers (no model calls). You can roll back from the history below.')">
+      <button class="approve">Apply v{{ candidate.version }}</button></form>
+    <form method="post" action="/gate/{{ candidate.version }}/discard">
+      <button class="reject">Discard</button></form>
+  </div>
+</div>
+{% endif %}
+
+{% if not fit_status.running %}
+<div class="card">
+  <h3>{{ 'Refit again' if candidate else 'Preview a refit' }}</h3>
+  <p>{{ new }} new decisions since the current model was fit.</p>
+  <form method="post" action="/gate/fit" class="actions" style="align-items: center;">
+    {% if missing %}
+    <label style="font-weight: 400;"><input type="checkbox" name="evaluate_missing" value="1" checked>
+      first ask Jev about the {{ missing }} decisions with no answers under the current profile
+      (~${{ '%.2f' % (missing * 0.00025) }})</label>
+    {% endif %}
+    <button>Preview refit</button>
+  </form>
+  <p class="meta">Free apart from that; everything else is cached. Takes a few seconds.</p>
+</div>
+{% endif %}
+
+<h3>History</h3>
+<table>
+  <tr><th>version</th><th>fit</th><th>decisions</th><th>AUC</th><th>gloss / review</th><th></th></tr>
+  {% for m in history %}
+  <tr>
+    <td>v{{ m.version }}{% if m.status == 'active' %} <span class="badge">active</span>{% endif %}</td>
+    <td>{{ m.created_at[:10] }}</td><td>{{ m.stats.n_labels }}</td>
+    <td>{{ '%.3f' % m.stats.auc_candidate if m.stats.auc_candidate is not none else '–' }}</td>
+    <td>{{ m.thresholds.gloss_min }} / {{ m.thresholds.review_min }}</td>
+    <td>{% if m.status != 'active' %}
+      <form method="post" action="/gate/{{ m.version }}/apply"
+            onsubmit="return confirm('Roll back to v{{ m.version }}?')">
+        <button class="subtle">roll back to this</button></form>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="meta">No fitted models yet; the gate is using built-in defaults.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

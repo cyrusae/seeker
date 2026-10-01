@@ -20,6 +20,33 @@
 </table>
 
 <div class="card">
+  <h3>Gate model</h3>
+  <p class="meta">How the Jev gate weighs its answers into a "worth a look?" score.
+    Refit after a stretch of reviewing (about every {{ gate_min_new }}+ decisions) or a
+    profile change, so the gate keeps learning from what you actually keep.
+    {% if gate_mode == 'off' %}<br><strong>The gate is off</strong> (GATE_MODE=off), so new
+    jobs aren't scored by it yet; set GATE_MODE=shadow to score them next to DeepSeek.{% endif %}</p>
+  <p>
+    {% if gate_model.version %}
+    <strong>v{{ gate_model.version }}</strong> · fit {{ (gate_model.created_at or '')[:10] }}
+    on {{ gate_model.stats.n_labels }} decisions
+    {% if gate_model.stats.auc_candidate %}· AUC {{ '%.3f' % gate_model.stats.auc_candidate }}{% endif %}
+    {% else %}
+    <strong>built-in default</strong> (never fit)
+    {% endif %}
+    · gloss ≥ {{ gate_model.thresholds.gloss_min }} · review ≥ {{ gate_model.thresholds.review_min }}
+  </p>
+  <div class="actions" style="align-items: center;">
+    {% if gate_new >= gate_min_new %}
+    <span style="color: var(--warn);">⚑ {{ gate_new }} new decisions since the last fit</span>
+    {% else %}
+    <span class="meta">{{ gate_new }} new decisions since the last fit</span>
+    {% endif %}
+    <a class="btn" href="/gate">Preview refit…</a>
+  </div>
+</div>
+
+<div class="card">
   <h3>Import profile version</h3>
   <p class="meta">Upload or paste a profile JSON (schema: docs/interview_spec.md).
     Same applicant_id creates a new version; scoring uses the latest one.

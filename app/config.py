@@ -63,6 +63,16 @@ class Settings:
     # Pipeline knobs
     escalate_min_score: int = int(_env("ESCALATE_MIN_SCORE", "55"))
     review_min_score: int = int(_env("REVIEW_MIN_SCORE", "50"))  # below → auto-skip
+    # Jev gate (app/gate.py). off: not called. shadow: scored alongside the
+    # DeepSeek eval and stored (gate_score), but DeepSeek still decides.
+    gate_mode: str = _env("GATE_MODE", "off").lower()
+    # Recall targets gate-fit picks thresholds for: the gloss threshold keeps
+    # this share of jobs you'd keep; the review floor keeps this share.
+    gate_gloss_recall: float = float(_env("GATE_GLOSS_RECALL", "0.95"))
+    gate_review_recall: float = float(_env("GATE_REVIEW_RECALL", "0.99"))
+    # Random below-the-floor jobs surfaced per applicant per cycle, so your
+    # decisions don't only ever cover jobs the scorer already liked.
+    spot_checks_per_run: int = int(_env("SPOT_CHECKS_PER_RUN", "3"))
     # Review-queue freshness. A job counts as "seen recently" if a source
     # listed it (or its direct URL checked out) within RECENT_SEEN_DAYS;
     # unseen for STALE_AFTER_DAYS or more, it moves to the stale view.

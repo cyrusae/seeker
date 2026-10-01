@@ -14,6 +14,7 @@ import time
 import httpx
 
 from . import db, llm, textclean
+from .config import settings
 
 SCORE_SYSTEM = """You are a job-match evaluator. You receive an applicant profile
 (JSON) and one job posting. Score the match honestly — a mediocre match should
@@ -289,7 +290,6 @@ def evaluate_job(job_id: str):
     try:
         ev = llm.complete_json("score", SCORE_SYSTEM, user_msg, max_tokens=2500)
         escalated = 0
-        from .config import settings
         esc, sc = settings.role("escalate"), settings.role("score")
         # Only escalate if it's actually a different judge (provider OR model).
         if int(ev.get("score", 0)) >= settings.escalate_min_score and \
@@ -318,6 +318,54 @@ def evaluate_job(job_id: str):
             conn.execute(
                 "UPDATE jobs SET status='error', error=? WHERE id=? AND status='pending_eval'",
                 (str(e)[:500], job_id))
+        return
+    if settings.gate_mode == "shadow":
+        shadow_gate(job_id, profile)
+
+
+def shadow_gate(job_id: str, profile: dict) -> None:
+    """Score a job with the Jev gate and store it next to the DeepSeek eval,
+    without touching status. Failures are logged, never fatal: shadow mode
+    must not be able to break the real eval."""
+    from . import gate
+    try:
+        with db.connect() as conn:
+            job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            v = conn.execute("SELECT MAX(version) v FROM profiles WHERE applicant_id=?",
+                             (job["applicant_id"],)).fetchone()["v"]
+        gate.init_db()
+        ev = gate.evaluate(job, profile, v)
+        c = gate.combine(ev["answers"], ev["meta"], applicant_id=job["applicant_id"])
+        pros, cons = gate.top_reasons(ev["answers"], ev["meta"])
+        summary = {"model_version": gate.active_model()["version"], "vetoes": c["vetoes"],
+                   "scam_risk": c["scam_risk"], "deadline_passed": c["deadline_passed"],
+                   "for": pros, "against": cons}
+        with db.connect() as conn:
+            conn.execute("UPDATE jobs SET gate_score=?, gate_req=?, gate_json=? WHERE id=?",
+                         (c["gate_score"], ev["req_hash"], json.dumps(summary), job_id))
+    except Exception as e:  # noqa: BLE001
+        print(f"[gate] shadow eval failed for {job_id}: {str(e)[:200]}")
+
+
+def pick_spot_checks(since: str) -> int:
+    """Surface a few random jobs that this cycle auto-skipped, marked as spot
+    checks. Without them, every decision you make is about a job the scorer
+    already liked, and each refit learns only from its own choices."""
+    n = settings.spot_checks_per_run
+    if n <= 0:
+        return 0
+    picked = 0
+    with db.connect() as conn:
+        for (aid,) in conn.execute("SELECT DISTINCT applicant_id FROM jobs "
+                                   "WHERE status='skipped' AND created_at >= ?", (since,)).fetchall():
+            ids = [r["id"] for r in conn.execute(
+                "SELECT id FROM jobs WHERE status='skipped' AND applicant_id=? "
+                "AND created_at >= ? AND spot_check=0 ORDER BY RANDOM() LIMIT ?",
+                (aid, since, n))]
+            conn.executemany("UPDATE jobs SET status='pending_user_review', spot_check=1 "
+                             "WHERE id=? AND status='skipped'", [(i,) for i in ids])
+            picked += len(ids)
+    return picked
 
 
 def prefilter_pending() -> int:
@@ -432,6 +480,7 @@ def run_full_cycle() -> dict:
             return {"ingested": added, "closed": closed, "stopped": True}
         RUN_STATUS["phase"] = "evaluating"
         RUN_STATUS["evaluated"] = evaluated = evaluate_pending()
+        spot = pick_spot_checks(RUN_STATUS["started_at"])
         RUN_STATUS["phase"] = "stopped" if _STOP.is_set() else "done"
         db.set_meta("last_cycle", db.now())
         from . import notify
@@ -439,8 +488,14 @@ def run_full_cycle() -> dict:
             notify.notify("seeker: pipeline stopped",
                            f"stopped early — {added} ingested, {evaluated} evaluated, {closed} closed")
         else:
-            notify.notify("seeker: pipeline finished",
-                           f"{added} ingested · {evaluated} evaluated · {closed} closed")
+            msg = f"{added} ingested · {evaluated} evaluated · {closed} closed"
+            if spot:
+                msg += f" · {spot} spot checks"
+            from . import gatefit
+            due = gatefit.nudge()
+            if due:
+                msg += f"\n{due} new decisions since the last gate fit (Profiles → Gate)"
+            notify.notify("seeker: pipeline finished", msg)
         notify.ping_pipeline(ok=True)
         return {"ingested": added, "evaluated": evaluated, "closed": closed,
                 "stopped": _STOP.is_set()}

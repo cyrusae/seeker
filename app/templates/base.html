@@ -69,7 +69,9 @@ details.posting .desc { max-height: 22rem; overflow-y: auto; font-size: 0.88rem;
   <a href="/jobs" {% if path.startswith('/jobs') %}class="here"{% endif %}>Jobs</a>
   <a href="/companies" {% if path.startswith('/companies') %}class="here"{% endif %}>Companies</a>
   <a href="/submit" {% if path.startswith('/submit') %}class="here"{% endif %}>Submit</a>
-  <a href="/profiles" {% if path.startswith('/profiles') %}class="here"{% endif %}>Profiles</a>
+  {% set _nudge = gate_nudge() %}
+  <a href="/profiles" {% if path.startswith('/profiles') or path.startswith('/gate') %}class="here"{% endif %}
+     {% if _nudge %}title="{{ _nudge }} new decisions since the last gate fit — time to refit"{% endif %}>Profiles{% if _nudge %} <span class="badge" style="color: var(--warn); border-color: var(--warn);">refit</span>{% endif %}</a>
   <a href="/usage" {% if path.startswith('/usage') %}class="here"{% endif %}>Usage</a>
   <a href="/status" {% if path.startswith('/status') %}class="here"{% endif %}>Status</a>
 </nav>

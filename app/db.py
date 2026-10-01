@@ -137,6 +137,17 @@ def init_db():
             conn.execute("ALTER TABLE jobs ADD COLUMN missed_count INTEGER NOT NULL DEFAULT 0")
         if "closure_dismissed" not in cols:
             conn.execute("ALTER TABLE jobs ADD COLUMN closure_dismissed INTEGER NOT NULL DEFAULT 0")
+        if "gate_score" not in cols:
+            # Jev gate result (shadow or live): score, the gate_evals request
+            # it came from (so a refit can rescore without a model call), and
+            # a small JSON summary (vetoes, scam, deadline, reasons).
+            conn.execute("ALTER TABLE jobs ADD COLUMN gate_score REAL")
+            conn.execute("ALTER TABLE jobs ADD COLUMN gate_req TEXT")
+            conn.execute("ALTER TABLE jobs ADD COLUMN gate_json TEXT")
+        if "spot_check" not in cols:
+            # surfaced at random from below the review floor, to keep the
+            # gate's training labels from only covering jobs it already liked
+            conn.execute("ALTER TABLE jobs ADD COLUMN spot_check INTEGER NOT NULL DEFAULT 0")
         if "last_seen_at" not in cols:
             # Last time a source listing (or a direct-URL liveness check) showed
             # the posting still up. Existing rows start at first-seen — the

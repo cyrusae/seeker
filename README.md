@@ -111,6 +111,30 @@ docker compose exec seeker uv run python cli.py tuning-report yourname > report.
 No restart needed — evals always read the latest imported version. (From your
 laptop: `scp` the JSON to the homelab first, or run the whole thing over ssh.)
 
+## Jev gate (in progress)
+
+A cheaper, more inspectable "worth a look?" gate, being validated in shadow
+before it replaces the DeepSeek score. `app/gate.py` asks Jev (a System One
+model, via OpenRouter) one batch of narrow typed questions per job, built from
+the profile: one per hard filter, anti-criterion and soft preference, plus role
+fit, qualifications, seniority, thin posting, scam risk and passed deadline.
+Policy is code: dealbreakers (plain-string `anti_criteria`/`hard_filters.other`
+items, or `"severity": "dealbreaker"`) veto; everything else feeds a small
+learned logistic blend whose output is the gate score (≈ chance you'd keep it).
+
+- `GATE_MODE=shadow` scores every evaluated job alongside DeepSeek
+  (`jobs.gate_score`, shown as "Jev NN" on cards); DeepSeek still decides.
+- `python cli.py gate-backtest` scores your past decisions and writes
+  `data/gate_backtest.md` (fair AUC vs DeepSeek, per-item firing rates).
+- **Profiles → Gate** (or `cli.py gate-fit`) refits the blend from your
+  decisions and previews what would change; nothing applies until you click
+  Apply, and old versions can be rolled back. The nav shows a "refit" badge
+  after ~30 new decisions. All Jev answers are cached in `gate_evals`, so
+  refits are free unless the profile changed.
+- `SPOT_CHECKS_PER_RUN` random below-the-floor jobs per applicant per cycle
+  are surfaced as 🎲 spot checks, so the gate's training data isn't limited to
+  jobs it already liked.
+
 ## Homelab migration
 
 ```sh

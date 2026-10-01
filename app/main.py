@@ -53,13 +53,35 @@ def _days_ago(ts: str | None) -> int | None:
 
 
 templates.env.filters["days_ago"] = _days_ago
+templates.env.filters["gate_info"] = lambda j: _gate_info(j)
+
+
+def _gate_nudge():
+    from . import gatefit
+    return gatefit.nudge()
+
+
+templates.env.globals["gate_nudge"] = _gate_nudge
+
+
+def _gate_info(j) -> dict:
+    try:
+        return json.loads(j["gate_json"] or "{}")
+    except (ValueError, TypeError):
+        return {}
+
+
+def _deadline_passed(j) -> bool:
+    """The Jev gate read a stated application deadline that's already past."""
+    return _gate_info(j).get("deadline_passed", 0) >= 0.8
 
 
 def _freshness(j) -> str:
-    """Review-queue bucket: 'stale' (flagged closed, or no source has listed it
-    in STALE_AFTER_DAYS), 'recent' (listed within RECENT_SEEN_DAYS), else
-    'aging'. last_seen_at falls back to created_at for safety."""
-    if j["closed_at"]:
+    """Review-queue bucket: 'stale' (flagged closed, a stated deadline has
+    passed, or no source has listed it in STALE_AFTER_DAYS), 'recent' (listed
+    within RECENT_SEEN_DAYS), else 'aging'. last_seen_at falls back to
+    created_at for safety."""
+    if j["closed_at"] or _deadline_passed(j):
         return "stale"
     seen = _days_ago(j["last_seen_at"] or j["created_at"])
     if seen is None:
@@ -199,11 +221,12 @@ def review(request: Request, applicant: str = "", view: str = "", sort: str = "f
     rd, sd = settings.recent_seen_days, settings.stale_after_days
     if view == "stale":
         sections = [
-            ("Likely closed", "The board stopped listing these, or the posting URL "
-             "says they're gone.", [j for j in buckets["stale"] if j["closed_at"]]),
+            ("Likely closed", "The board stopped listing these, the posting URL says "
+             "they're gone, or the posting's own application deadline has passed.",
+             [j for j in buckets["stale"] if j["closed_at"] or _deadline_passed(j)]),
             (f"Not seen in {sd}+ days", "No closure signal, but no source has listed "
              "these in a long time. Check the posting before spending time on one.",
-             [j for j in buckets["stale"] if not j["closed_at"]]),
+             [j for j in buckets["stale"] if not (j["closed_at"] or _deadline_passed(j))]),
         ]
     else:
         view = ""
@@ -643,8 +666,48 @@ def profiles_page(request: Request, msg: str = ""):
                FROM profiles GROUP BY applicant_id ORDER BY applicant_id""").fetchall()
         profs = [{**dict(r), "name": (db.latest_profile(conn, r["applicant_id"]) or {}).get("name")}
                  for r in rows]
+    from . import gate, gatefit
+    gate.init_db()
     return templates.TemplateResponse(request, "profiles.html", {
-        "profiles": profs, "msg": msg})
+        "profiles": profs, "msg": msg, "gate_model": gate.active_model(),
+        "gate_new": gatefit.new_decisions(), "gate_min_new": gatefit.MIN_NEW_DECISIONS,
+        "gate_mode": settings.gate_mode})
+
+
+@app.get("/gate")
+def gate_page(request: Request):
+    """Gate model: refit preview (candidate), apply/discard, version history."""
+    from . import gate, gatefit
+    gate.init_db()
+    models = gate.list_models(15)
+    cand = next((m for m in models if m["status"] == "candidate"), None)
+    return templates.TemplateResponse(request, "gate.html", {
+        "active": gate.active_model(), "candidate": cand,
+        "history": [m for m in models if m["status"] in ("active", "retired")],
+        "fit_status": gatefit.status(), "new": gatefit.new_decisions(),
+        "missing": gatefit.missing_count(), "features": gate.FIT_FEATURES})
+
+
+@app.post("/gate/fit")
+def gate_fit(evaluate_missing: str = Form("")):
+    from . import gatefit
+    gatefit.start_background(bool(evaluate_missing))
+    return RedirectResponse("/gate", status_code=303)
+
+
+@app.post("/gate/{version}/apply")
+def gate_apply(version: int):
+    from . import gatefit
+    n = gatefit.apply(version)
+    return RedirectResponse(f"/profiles?msg=Gate model v{version} applied; "
+                            f"{n} gate scores updated.", status_code=303)
+
+
+@app.post("/gate/{version}/discard")
+def gate_discard(version: int):
+    from . import gate
+    gate.discard(version)
+    return RedirectResponse("/gate", status_code=303)
 
 
 @app.post("/profiles/upload")

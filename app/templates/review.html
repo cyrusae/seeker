@@ -71,12 +71,14 @@
   <span class="score {{ 'score-hi' if s >= 75 else 'score-mid' if s >= 55 else 'score-lo' }}">{{ s }}</span>
   {% set reasons = {'absent': 'no longer listed on its job board', '404': 'posting URL returns 404 (removed)', '410': 'posting URL returns 410 (removed)', 'expired-text': 'the posting page says it is closed/filled', 'manual': 'you marked this posting gone'} %}
   <h3>{{ j['title'] }} — {{ j['company'] or '?' }}
-    {% if j['closed_at'] %}<span title="likely closed — {{ reasons.get(j['closed_reason'], 'no longer available') }} (as of {{ j['closed_at'] }})" style="font-size: 0.7em; font-weight: 600; color: #c0392b; border: 1px solid currentColor; border-radius: 3px; padding: 0 0.3em; vertical-align: middle;">✖ likely closed</span>{% endif %}
+    {% if (j | gate_info).get('deadline_passed', 0) >= 0.8 %}<span title="the posting states an application deadline that has passed" style="font-size: 0.7em; font-weight: 600; color: #c0392b; border: 1px solid currentColor; border-radius: 3px; padding: 0 0.3em; vertical-align: middle;">⏰ deadline passed</span> {% endif %}{% if j['closed_at'] %}<span title="likely closed — {{ reasons.get(j['closed_reason'], 'no longer available') }} (as of {{ j['closed_at'] }})" style="font-size: 0.7em; font-weight: 600; color: #c0392b; border: 1px solid currentColor; border-radius: 3px; padding: 0 0.3em; vertical-align: middle;">✖ likely closed</span>{% endif %}
   </h3>
   <div class="meta">
     {{ j['applicant_id'] }} · {{ j['location'] or '?' }}
     {% if j['salary'] %} · {{ j['salary'] | money }}{% endif %}
     · via {{ j['source'] }}
+    {% set gi = j | gate_info %}
+    {% if j['gate_score'] is not none %} · <span title="Jev gate score (shadow: DeepSeek still decides). {% if gi.get('for') %}For: {{ gi['for'] | join('; ') }}. {% endif %}{% if gi.get('against') %}Against: {{ gi['against'] | join('; ') }}.{% endif %}">Jev {{ j['gate_score'] | round | int }}</span>{% endif %}
     {% set first = j['created_at'] | days_ago %}{% set last = (j['last_seen_at'] or j['created_at']) | days_ago %}
     · <span title="first seen {{ (j['created_at'] or '')[:10] }}; last listed by a source {{ (j['last_seen_at'] or j['created_at'] or '')[:10] }}">
       {%- if last == first %}seen {{ first }}d ago{% else %}first seen {{ first }}d ago, last seen {{ last }}d ago{% endif -%}
@@ -90,6 +92,10 @@
     “{{ j['similar_title'] or j['similar_to'] }}”
     (currently {{ (j['similar_status'] or '?').replace('_', ' ') }}) —
     possibly two openings, or the same job worded differently.</p>
+  {% endif %}
+  {% if j['spot_check'] %}
+  <p class="meta" style="color: var(--warn);">🎲 Spot check: picked at random from jobs that
+    fell below the review bar. Your call (either way) tells the gate whether it's missing things.</p>
   {% endif %}
   <p class="pitch"><strong>Why:</strong> {{ j['pitch'] }}</p>
   <p class="concerns"><strong>Concerns:</strong> {{ j['concerns'] }}</p>

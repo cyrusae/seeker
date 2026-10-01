@@ -68,7 +68,9 @@ Rules:
       "other": ["any absolute dealbreakers"]
     },
     "anti_criteria": [
-      "title patterns or role shapes to score near zero even if skills match"
+      "title patterns or role shapes to score near zero even if skills match",
+      {"text": "a strong negative that ISN'T an automatic no",
+       "severity": "penalty"}
     ],
     "soft_preferences": [
       {"want": "description", "weight": "high|medium|low"}
@@ -99,6 +101,16 @@ Rules:
   }
 }
 ```
+
+**Severity** (applies to `anti_criteria` and `hard_filters.other`): a plain
+string is a *dealbreaker*. The gate vetoes any job that clearly matches it. Use
+`{"text": "...", "severity": "penalty"}` for things that count against a job
+but that the applicant would still sometimes take (e.g. "prefers ≤4 years
+required, but would stretch"). For each item, ask: "If a job were great
+otherwise, would this alone make it a no?" The Gate page (Profiles → Gate)
+flags dealbreakers that keep firing on jobs the applicant kept anyway; those
+are the first candidates to downgrade. Phrase each item as one condition a
+posting could explicitly state, because vague items misfire.
 
 The `sources` block can be filled in by whoever operates the system rather than
 the applicant — include it with best guesses and mark uncertainty. Adzuna
