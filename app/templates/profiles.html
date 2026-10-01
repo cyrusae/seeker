@@ -37,8 +37,9 @@
     · gloss ≥ {{ gate_model.thresholds.gloss_min }} · review ≥ {{ gate_model.thresholds.review_min }}
   </p>
   <div class="actions" style="align-items: center;">
-    {% if gate_new >= gate_min_new %}
-    <span style="color: var(--warn);">⚑ {{ gate_new }} new decisions since the last fit</span>
+    {% set _why = gate_nudge() %}
+    {% if _why %}
+    <span style="color: var(--warn);">⚑ {{ _why }}</span>
     {% else %}
     <span class="meta">{{ gate_new }} new decisions since the last fit</span>
     {% endif %}

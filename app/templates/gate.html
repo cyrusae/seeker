@@ -78,7 +78,11 @@
 {% if not fit_status.running %}
 <div class="card">
   <h3>{{ 'Refit again' if candidate else 'Preview a refit' }}</h3>
-  <p>{{ new }} new decisions since the current model was fit.</p>
+  <p>{{ new }} new decisions since the current model was fit.
+    {% set _why = gate_nudge() %}{% if _why and 'profile changed' in _why.lower() %}
+    <br><span style="color: var(--warn);">⚑ A profile changed since the last fit, so its
+    questions changed too: keep "first ask Jev" ticked so past decisions get answers
+    under the new wording.</span>{% endif %}</p>
   <form method="post" action="/gate/fit" class="actions" style="align-items: center;">
     {% if missing %}
     <label style="font-weight: 400;"><input type="checkbox" name="evaluate_missing" value="1" checked>

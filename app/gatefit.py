@@ -23,6 +23,16 @@ from .config import settings
 
 POSITIVE = ("applied", "shortlisted", "archived")
 MIN_NEW_DECISIONS = 30
+MIN_FEATURE_ROWS = 10  # training rows where a feature is >= 0.05 before it's learned
+
+
+def _held_weight(feature: str, current: dict) -> float:
+    """Weight to hold an unlearnable feature at: the current model's, unless
+    that's ~0 because it was never learned either, then the built-in default."""
+    w = current["weights"].get(feature, 0.0)
+    if abs(w) < 1e-3:
+        w = gate.DEFAULT_MODEL["weights"].get(feature, 0.0)
+    return w
 _FIT_LOCK = threading.Lock()
 
 
@@ -35,17 +45,21 @@ def closure_note(feedback: str | None) -> bool:
 # --- logistic regression (tiny, dependency-free) ------------------------------
 
 def fit_logistic(X: list[list[float]], y: list[int], l2: float = 0.01,
-                 iters: int = 3000, lr: float = 0.3) -> list[float]:
+                 iters: int = 3000, lr: float = 0.3,
+                 offset: list[float] | None = None) -> list[float]:
     """Batch gradient descent, class-weighted so ~1:7 positives aren't drowned
-    out. Features are ~0-1 already. Returns [bias, w1..wn]."""
+    out. Features are ~0-1 already. `offset` is a fixed per-row addition to
+    the logit (contributions of features held at a fixed weight). Returns
+    [bias, w1..wn]."""
     n, d = len(X), len(X[0])
     pos = sum(y)
     wpos, wneg = n / (2 * max(pos, 1)), n / (2 * max(n - pos, 1))
     w = [0.0] * (d + 1)
+    off = offset or [0.0] * n
     for _ in range(iters):
         g = [0.0] * (d + 1)
-        for xi, yi in zip(X, y):
-            z = w[0] + sum(a * b for a, b in zip(w[1:], xi))
+        for xi, yi, oi in zip(X, y, off):
+            z = oi + w[0] + sum(a * b for a, b in zip(w[1:], xi))
             p = 1 / (1 + math.exp(-max(-30, min(30, z))))
             e = (p - yi) * (wpos if yi else wneg)
             g[0] += e
@@ -168,11 +182,21 @@ def fit(evaluate_missing: bool = False, progress=None) -> int:
         if sum(x["y"] for x in train) < 10 or sum(1 - x["y"] for x in train) < 10:
             raise ValueError("not enough decisions to fit (need 10+ kept and 10+ rejected)")
 
+        # A feature the data barely exercises can't be learned: the fit would
+        # just write ~0 (e.g. "penalty" before any profile item is marked a
+        # penalty). Hold those at the current model's weight instead — or the
+        # built-in default if the current one never learned it either — so
+        # adding penalty items later doesn't silently do nothing.
+        held = {k: _held_weight(k, current) for k in gate.FIT_FEATURES
+                if sum(1 for x in train if x["f"][k] >= 0.05) < MIN_FEATURE_ROWS}
+        learn = [k for k in gate.FIT_FEATURES if k not in held]
+
         def vec(x):
-            return [x["f"][k] for k in gate.FIT_FEATURES] + \
+            return [x["f"][k] for k in learn] + \
                    [1.0 if x["job"]["applicant_id"] == a else 0.0 for a in applicants]
 
         X, y = [vec(x) for x in train], [x["y"] for x in train]
+        off = [sum(wk * x["f"][k] for k, wk in held.items()) for x in train]
         # 5-fold CV predictions: honest scores for AUC and threshold picking
         idx = list(range(len(train)))
         random.Random(1).shuffle(idx)
@@ -180,13 +204,16 @@ def fit(evaluate_missing: bool = False, progress=None) -> int:
         for k in range(5):
             test = set(idx[k::5])
             w = fit_logistic([X[i] for i in idx if i not in test],
-                             [y[i] for i in idx if i not in test])
+                             [y[i] for i in idx if i not in test],
+                             offset=[off[i] for i in idx if i not in test])
             for i in test:
-                cv[i] = w[0] + sum(a * b for a, b in zip(w[1:], X[i]))
-        w = fit_logistic(X, y)
-        nf = len(gate.FIT_FEATURES)
+                cv[i] = off[i] + w[0] + sum(a * b for a, b in zip(w[1:], X[i]))
+        w = fit_logistic(X, y, offset=off)
+        nf = len(learn)
+        learned = dict(zip(learn, w[1:1 + nf]))
         weights = {"bias": round(w[0], 4),
-                   **{k: round(v, 4) for k, v in zip(gate.FIT_FEATURES, w[1:1 + nf])}}
+                   **{k: round(learned[k] if k in learned else held[k], 4)
+                      for k in gate.FIT_FEATURES}}
         applicant_bias = {a: round(v, 4) for a, v in zip(applicants, w[1 + nf:])}
 
         # Candidate scores for every labeled job: CV score for trained jobs,
@@ -213,6 +240,7 @@ def fit(evaluate_missing: bool = False, progress=None) -> int:
             "n_labels": len(rows), "n_pos": sum(x["y"] for x in rows),
             "n_vetoed": len(rows) - len(train), "n_missing": n_missing,
             "veto_loss": sum(1 for x in rows if x["y"] and x["vetoes"]),
+            "held_features": {k: round(v, 4) for k, v in held.items()},
             "auc_candidate": auc([(cand[x["job"]["id"]], x["y"]) for x in rows]),
             "auc_current": auc([(cur[x["job"]["id"]], x["y"]) for x in rows]),
             "current_version": current["version"],
@@ -289,6 +317,9 @@ def _warnings(rows, stats, current) -> list[str]:
     elif current.get("jev_model") and models and current["jev_model"] not in models:
         out.append(f"Jev changed since the current model was fit ({current['jev_model']} → "
                    f"{next(iter(models))}). Re-run the backtest before refitting.")
+    for k, v in stats.get("held_features", {}).items():
+        out.append(f"Too few decisions involve '{k}' to learn its weight, so it's held "
+                   f"at {v:+.2f} (from the current or default model) rather than fit.")
     if stats["veto_loss"]:
         out.append(f"{stats['veto_loss']} of {stats['n_pos']} kept jobs "
                    f"({100 * stats['veto_loss'] / max(stats['n_pos'], 1):.0f}%) are vetoed by a "
@@ -335,14 +366,33 @@ def new_decisions(model: dict | None = None) -> int:
     return sum(1 for r in rows if not (r["status"] == "rejected" and closure_note(r["feedback"])))
 
 
-def nudge() -> int | None:
-    """New-decision count if it's time to refit, else None. The default
-    (never-fit) model always nudges once enough decisions exist."""
+def profiles_changed_since_fit(model: dict | None = None) -> list[str]:
+    """Applicants whose latest profile version is newer than the active
+    model's fit. A new profile changes the questions, so the weights,
+    thresholds and cached answers are all out of date until a refit."""
+    model = model or gate.active_model()
+    if not model.get("version"):
+        return []  # never fit: the decision count drives the first nudge
+    with db.connect() as conn:
+        rows = conn.execute("SELECT applicant_id, MAX(created_at) t FROM profiles "
+                            "GROUP BY applicant_id").fetchall()
+    return [r["applicant_id"] for r in rows if r["t"] > model["created_at"]]
+
+
+def nudge() -> str | None:
+    """Why it's time to refit (one line), or None."""
     try:
-        n = new_decisions()
+        model = gate.active_model()
+        changed = profiles_changed_since_fit(model)
+        n = new_decisions(model)
     except Exception:  # noqa: BLE001 — a nudge must never break a page
         return None
-    return n if n >= MIN_NEW_DECISIONS else None
+    reasons = []
+    if changed:
+        reasons.append(f"profile changed since the last gate fit ({', '.join(changed)})")
+    if n >= MIN_NEW_DECISIONS:
+        reasons.append(f"{n} new decisions since the last gate fit")
+    return "; ".join(reasons).capitalize() if reasons else None
 
 
 # --- background run for the web UI --------------------------------------------------

@@ -494,7 +494,7 @@ def run_full_cycle() -> dict:
             from . import gatefit
             due = gatefit.nudge()
             if due:
-                msg += f"\n{due} new decisions since the last gate fit (Profiles → Gate)"
+                msg += f"\n{due} (Profiles → Gate)"
             notify.notify("seeker: pipeline finished", msg)
         notify.ping_pipeline(ok=True)
         return {"ingested": added, "evaluated": evaluated, "closed": closed,
