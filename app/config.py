@@ -58,6 +58,7 @@ class Settings:
     role_extract: RoleTarget = field(init=False)
     role_score: RoleTarget = field(init=False)
     role_escalate: RoleTarget = field(init=False)
+    role_gate: RoleTarget = field(init=False)  # Jev (System One), see app/gate.py
 
     # Pipeline knobs
     escalate_min_score: int = int(_env("ESCALATE_MIN_SCORE", "55"))
@@ -101,6 +102,7 @@ class Settings:
         self.role_extract = _parse_role(_env("ROLE_EXTRACT"), "local")
         self.role_score = _parse_role(_env("ROLE_SCORE"), "local")
         self.role_escalate = _parse_role(_env("ROLE_ESCALATE"), "anthropic:claude-haiku-4-5")
+        self.role_gate = _parse_role(_env("ROLE_GATE"), "openrouter:~typesafe/jev-latest")
 
     def role(self, name: str) -> RoleTarget:
         return getattr(self, f"role_{name}")
