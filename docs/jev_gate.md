@@ -22,8 +22,9 @@ explaining the project to someone else), see
 | Jev gate module, backtest, `gate-fit`, Gate page | **Done** |
 | `GATE_MODE=shadow`: new jobs get a Jev score next to DeepSeek's | **On** (DeepSeek still decides) |
 | Spot checks (3 random skipped jobs/applicant/cycle) | **On** |
-| Cyrus profile full review | **Done**: v12 imported 2026-10-01 |
-| Gate model in use | **v3** (applied 2026-10-01, fit after Cyrus's v12): AUC 0.856 on 1,244 decisions; gloss ≥ 39.2, review ≥ 29.3; penalty weight learned (−0.58); 18 of 174 kept jobs still vetoed. A later preview, v6, ranks marginally worse (0.857 vs 0.860) and isn't applied |
+| Cyrus profile | **v13** (2026-10-01): v12's full review plus a one-line fix to the citizenship dealbreaker and a new `work_authorization` field. See case study, round 4 |
+| Gate model in use | **v3** (fit after Cyrus's v12): gloss ≥ 39.2, review ≥ 29.3, penalty weight −0.58. With v13 answers: AUC 0.867 overall (CV), 14 of 180 kept jobs vetoed (6 of Cyrus's 154; the rest Martin's). A refit on v13 answers (v8) didn't beat it and was discarded |
+| Shadow scores | Current for all jobs with answers under the current profiles (~1,630 jobs). Status → Backfill refreshes after any profile change |
 | Martin profile full review | **Next, and blocking**: still on v9. His shadow scores are unreliable (AUC 0.59 vs DeepSeek 0.77; 8 of his 64 review-queue jobs vetoed, 5 by the travel item). **Don't evaluate the gate on his jobs until after his review, and don't finalize pipeline changes without checking their effect on him.** |
 | Live mode (gate decides status, gloss step, gloss-on-open) | **Not built** |
 
@@ -49,15 +50,11 @@ explaining the project to someone else), see
    applicant**, so one applicant can go live while the other stays on
    DeepSeek until their profile and numbers are ready.
 
-**Open item (Cyrus, found 2026-10-01):** the v12 dealbreaker *"Requires US
-citizenship without dual citizenship"* fires on postings that just say "US
-citizen required" (Axon SRE II, Xealth Data Platform, two Amazon WWPS
-ProServe roles, Smartsheet FedRAMP). It hits 3% of kept jobs vs <1% of
-rejects. Jev drops the "without dual citizenship" qualifier. Reword it so the
-posting itself would have to say it, e.g. *"Explicitly excludes dual citizens
-or requires renouncing other citizenships"*, then refit. The Gate page now
-flags any dealbreaker that fires at least as often on kept jobs as on rejected
-ones; the old 5%-of-kept rule missed this one.
+**Resolved 2026-10-01:** Cyrus's citizenship dealbreaker was firing on any
+"US citizen required". Fixed in profile v13; it now fires on 0 kept jobs and
+still catches an explicit dual-citizen exclusion (p = 0.98 on a synthetic
+test). The Gate page now flags any dealbreaker that fires at least as often on
+kept jobs as on rejected ones. Details in the case study, round 4.
 
 ## Evidence so far
 

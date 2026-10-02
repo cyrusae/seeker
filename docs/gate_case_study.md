@@ -254,7 +254,55 @@ so call it a tie at about a third of the cost. For Martin, Jev is
 only 26 kept jobs. That's the open problem.
 
 **Total Jev spend for the whole project** (every backtest, refit and re-ask):
-**$1.37** over 4,809 calls.
+**$1.37** over 4,809 calls through round 3; **$1.72** over 5,784 calls after
+round 4.
+
+**Round 4: a one-line profile fix, measured (profile v13).** With shadow
+scores visible per job, two shortlisted jobs showed a score of exactly 2,
+the veto cap. Both were vetoed by a new v12 dealbreaker, *"Requires US
+citizenship without dual citizenship"*. The postings only said "U.S. Citizen"
+or "U.S. Citizen or Permanent Resident". Jev had dropped the qualifier, the
+same failure as the evening-class items in round 1. The refit preview
+missed it because its flag rule required 5% of kept jobs, and this item hit
+3% of kept jobs vs <1% of rejects. **Fix to the tooling:** a dealbreaker is
+now also flagged when it fires at least as often on kept jobs as on rejected
+ones.
+
+Profile v13 made exactly two changes:
+1. The item was reworded: *"Explicitly excludes dual citizens or requires
+   holding only US citizenship (e.g. 'no dual nationals', 'must renounce
+   other citizenships'); a plain 'US citizen required' does not count"*.
+2. A `work_authorization` field ("US citizen (dual citizenship); no
+   sponsorship needed") was added to what Jev reads.
+
+Everything else was held fixed. Cost: $0.357 (967 Jev calls to re-ask about
+past decisions).
+
+| Cyrus, same 154 kept / ~807 rejected | v12 | v13 |
+|---|---|---|
+| Item fires (p ≥ 0.8) on kept / rejected | 5 / 7 | **0 / 0** |
+| Kept jobs vetoed by any dealbreaker | 10 | **6** |
+| AUC, all decisions (5-fold CV) | 0.859 | **0.867** |
+| AUC, Cyrus (5-fold CV) | 0.879 | **0.889** |
+| AUC, Cyrus, fair subset (DeepSeek: 0.704) | 0.754 | 0.753 |
+| "Meets requirements" score on the 112 postings requiring US citizenship | 0.112 | 0.126 |
+| … on all other postings | 0.318 | 0.323 |
+
+- The five wrongly vetoed kept jobs came back at 79, 64, 64, 33 and 32,
+  all above the review floor, three above the gloss threshold.
+- **Positive control:** the reworded item on three synthetic postings gave
+  p = 0.98 for "must hold sole U.S. citizenship; dual nationals are not
+  eligible", 0.06 for "Must be a U.S. citizen", and 0.08 with no mention.
+  It still catches the real thing; it's just precise now.
+- **Negative result:** telling Jev about the applicant's citizenship barely
+  moved the qualifications score (+0.014). The gap on citizenship-required
+  postings (0.13 vs 0.32) mostly reflects those roles being harder
+  (government, clearance, seniority), not Jev doubting eligibility.
+- **Refit or not:** a refit on the v13 answers (candidate v8, CV AUC 0.864)
+  didn't beat the existing model applied to the new answers (0.869; that
+  figure is partly in-sample). With only 19 new decisions since the last
+  fit, the existing model was kept. **The improvement came from better
+  answers, not new weights.**
 
 ## 7. What changed besides the score
 
@@ -284,7 +332,10 @@ only 26 kept jobs. That's the open problem.
    cleaned; frequent, fuzzy preferences shouldn't be hand-weighted. Splitting
    them (veto layer plus learned blend) fixed both problems.
 3. **Wording is most of the precision.** One clarifying sentence on every
-   violation question cut a misfire rate from 12–14% to 0–1%.
+   violation question cut a misfire rate from 12–14% to 0–1%. Later, a
+   qualifier inside a single item ("…without dual citizenship") was dropped
+   the same way. Stating what does *not* count ("a plain 'US citizen
+   required' does not count") fixed it, verified with a positive control.
 4. **Watch for degenerate fits.** A weight of exactly 0 meant "no data", not
    "doesn't matter"; thresholds of 2.0 meant "vetoes ate the recall budget",
    not "everything passes".
