@@ -870,7 +870,15 @@ def _shadow_stats() -> dict:
             k = f"DeepSeek {c['ds']} → Jev {c['jev']}"
             moves[k] = moves.get(k, 0) + 1
     from . import gate
+    # jobs scored before their applicant's latest profile version
+    with db.connect() as conn:
+        profile_changed = conn.execute(
+            "SELECT COUNT(*) n FROM jobs j JOIN (SELECT applicant_id, MAX(created_at) t "
+            "FROM profiles GROUP BY applicant_id) p ON p.applicant_id=j.applicant_id "
+            "JOIN gate_evals g ON g.job_id=j.id AND g.req_hash=j.gate_req "
+            "WHERE j.gate_score IS NOT NULL AND g.created_at < p.t").fetchone()["n"]
     return {"mode": settings.gate_mode, "model": gate.active_model()["version"],
+            "profile_changed": profile_changed,
             "since": since, "evaluated_new": len(recent),
             "scored_new": sum(1 for j in recent if j["gate_score"] is not None),
             "agree": sum(c["agree"] for c in cmp), "compared": len(cmp), "moves": moves,

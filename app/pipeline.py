@@ -328,7 +328,7 @@ def evaluate_job(job_id: str):
 from collections import deque  # noqa: E402
 GATE_FAILURES: deque = deque(maxlen=20)
 BACKFILL_STATUS = {"running": False, "done": 0, "total": 0, "failed": 0,
-                   "from_cache": 0, "called": 0, "finished_at": None}
+                   "from_cache": 0, "called": 0, "current": 0, "finished_at": None}
 
 
 def shadow_gate(job_id: str, profile: dict, cache_only: bool = False) -> bool:
@@ -368,38 +368,42 @@ def shadow_gate(job_id: str, profile: dict, cache_only: bool = False) -> bool:
 
 
 def backfill_shadow(statuses=("pending_user_review", "shortlisted"), workers: int = 6) -> dict:
-    """Give jobs a shadow gate score now instead of waiting for re-evaluation.
+    """Bring shadow gate scores up to date without waiting for re-evaluation.
 
-    Pass 1 (free): every unscored job, any status, that already has Jev
-    answers under its applicant's current profile (from backtests, refits or
-    earlier shadow runs) gets scored from the cache.
-    Pass 2 (~$0.00025/job): unscored jobs in `statuses` with no cached
-    answers get a Jev call."""
+    A job's score is current when it came from Jev answers under its
+    applicant's current profile (jobs.gate_req == today's request hash). For
+    every job that isn't:
+      - answers under the current profile already cached (from a backtest,
+        refit, or earlier run) -> rescore from the cache, free;
+      - otherwise, if it's in `statuses` -> one Jev call (~$0.00025);
+      - otherwise leave it (a stale or missing score on a decided/skipped job
+        isn't worth paying for).
+    Covers both never-scored jobs and ones scored under an older profile."""
     from concurrent.futures import ThreadPoolExecutor
+    from . import gate
+    marks = ",".join("?" * len(statuses))
     with db.connect() as conn:
-        rows = conn.execute("SELECT id, applicant_id, status FROM jobs "
-                            "WHERE gate_score IS NULL AND id IN "
-                            "(SELECT job_id FROM gate_evals)").fetchall()
-        marks = ",".join("?" * len(statuses))
-        active = conn.execute(f"SELECT id, applicant_id FROM jobs WHERE status IN ({marks}) "
-                              "AND gate_score IS NULL", statuses).fetchall()
-        profiles = {a: db.latest_profile(conn, a) for a in
-                    {r["applicant_id"] for r in rows} | {r["applicant_id"] for r in active}}
-    BACKFILL_STATUS.update(running=True, done=0, total=len(rows) + len(active), failed=0,
-                           from_cache=0, called=0, finished_at=None)
+        rows = conn.execute(
+            f"SELECT * FROM jobs WHERE status IN ({marks}) "
+            "OR id IN (SELECT job_id FROM gate_evals)", statuses).fetchall()
+        profiles = {a: db.latest_profile(conn, a) for a in {r["applicant_id"] for r in rows}}
+    BACKFILL_STATUS.update(running=True, done=0, total=len(rows), failed=0,
+                           from_cache=0, called=0, current=0, finished_at=None)
     try:
-        for r in rows:  # pass 1: cache only, no calls
-            if profiles.get(r["applicant_id"]) and \
-                    shadow_gate(r["id"], profiles[r["applicant_id"]], cache_only=True):
+        todo = []
+        for r in rows:
+            prof = profiles.get(r["applicant_id"])
+            if not prof:
+                BACKFILL_STATUS["done"] += 1
+                continue
+            if r["gate_score"] is not None and r["gate_req"] == gate.request_hash(r, prof):
+                BACKFILL_STATUS["current"] += 1
+            elif shadow_gate(r["id"], prof, cache_only=True):
                 BACKFILL_STATUS["from_cache"] += 1
+            elif r["status"] in statuses:
+                todo.append(r)
+                continue
             BACKFILL_STATUS["done"] += 1
-        with db.connect() as conn:  # pass 2: whatever pass 1 couldn't cover
-            marks = ",".join("?" * len(active)) or "''"
-            still = {r["id"] for r in conn.execute(
-                f"SELECT id FROM jobs WHERE gate_score IS NULL AND id IN ({marks})",
-                [r["id"] for r in active])}
-        todo = [r for r in active if r["id"] in still and profiles.get(r["applicant_id"])]
-        BACKFILL_STATUS["done"] += len(active) - len(todo)
 
         def one(r):
             ok = shadow_gate(r["id"], profiles[r["applicant_id"]])

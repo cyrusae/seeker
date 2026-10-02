@@ -86,15 +86,17 @@
   {% if sh.backfill.running %}
   <p>⏳ Backfilling: {{ sh.backfill.done }} / {{ sh.backfill.total }}{% if sh.backfill.failed %}, {{ sh.backfill.failed }} failed{% endif %}…
     <meta http-equiv="refresh" content="4"></p>
-  {% elif sh.unscored_active %}
+  {% elif sh.unscored_active or sh.profile_changed %}
   <form method="post" action="/gate/backfill" class="actions" style="align-items: center;"
         onsubmit="return confirm('Backfill Jev scores? First, any job with Jev answers already cached under its current profile is scored for free. Then jobs in review/shortlist with no answers get a Jev call (about $0.00025 each).')">
-    <span>{{ sh.unscored_active }} jobs in review/shortlist have no Jev score. Backfill also
-      scores any other job (decided, skipped, stale) whose Jev answers are already cached under
-      its current profile, for free.</span>
+    <span>{{ sh.unscored_active }} jobs in review/shortlist have no Jev score{% if sh.profile_changed %};
+      {{ sh.profile_changed }} jobs have scores from an older profile version{% endif %}. Backfill also
+      refreshes scores left over from an older profile, and scores any other job whose Jev
+      answers are already cached under its current profile, for free.</span>
     <button class="subtle">Backfill now</button>
   </form>
-  {% elif sh.backfill.finished_at %}
+  {% endif %}
+  {% if not sh.backfill.running and sh.backfill.finished_at %}
   <p class="meta">Backfill finished {{ sh.backfill.finished_at }}: {{ sh.backfill.from_cache }} scored
     from cached answers (free), {{ sh.backfill.called }} with new Jev calls{% if sh.backfill.failed %},
     {{ sh.backfill.failed }} failed{% endif %}.</p>

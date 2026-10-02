@@ -49,9 +49,13 @@ Rules:
    placeholders, real dates, quantified accomplishments where possible. If
    they have no resume, interview thoroughly enough to write `base_resume_md`
    yourself from their answers, and have them confirm it.
-7. Collect contact info for the resume header (name, city, email, phone —
+7. Ask about work authorization (citizenship, visa status, need for
+   sponsorship) and record it in `work_authorization`. Without it, the scoring
+   gate can't tell whether "US citizen required" or "no sponsorship" is a
+   problem for this applicant.
+8. Collect contact info for the resume header (name, city, email, phone —
    whatever they're comfortable including) into `contact`.
-8. When done, output ONLY the JSON below, complete and valid. In Full review
+9. When done, output ONLY the JSON below, complete and valid. In Full review
    and Tune modes, then add a short changelog after the JSON: each change and
    the evidence behind it.
 
@@ -127,7 +131,8 @@ nothing else from the conversation. So:
        "highlights": ["concrete accomplishment", "..."]}
     ],
     "education": ["..."],
-    "framing_notes": ["how to describe X when applying to Y", "..."]
+    "framing_notes": ["how to describe X when applying to Y", "..."],
+    "work_authorization": "e.g. 'US citizen (dual citizenship); no sponsorship needed' — the gate reads this to judge citizenship/visa requirements"
   },
   "criteria": {
     "target_roles": ["role families they want"],

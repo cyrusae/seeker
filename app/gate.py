@@ -29,8 +29,11 @@ from .llm import BudgetExceeded, LLMError
 _BASE_URLS = {"openrouter": "https://openrouter.ai/api"}
 
 # Applicant fields Jev sees. base_resume_md repeats work_history at 2x the
-# tokens; contact details are irrelevant to fit.
-APPLICANT_KEYS = ("summary", "skills", "education", "work_history", "framing_notes")
+# tokens; contact details are irrelevant to fit. work_authorization (e.g.
+# "US citizen (dual citizenship); no sponsorship needed") lets Jev judge
+# citizenship/sponsorship requirements instead of assuming they're unmet.
+APPLICANT_KEYS = ("summary", "skills", "education", "work_history", "framing_notes",
+                  "work_authorization")
 # Jev allows 32k tokens of state + longest question. ~4 chars/token; the
 # profile takes ~2-3k tokens, so this leaves ample room.
 MAX_DESC_CHARS = 60_000
