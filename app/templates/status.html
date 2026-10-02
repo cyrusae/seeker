@@ -56,6 +56,52 @@
   {% endif %}
 </div>
 
+{% set sh = shadow %}
+<h3>Jev shadow gate</h3>
+<div class="card">
+  {% if sh.mode != 'shadow' %}
+  <p>Shadow mode is <strong>{{ sh.mode }}</strong>. Set <code>GATE_MODE=shadow</code> in
+    <code>.env</code> and restart the server to score new jobs with Jev.</p>
+  {% else %}
+  <p>Mode <strong>shadow</strong> · gate model
+    {% if sh.model %}<a href="/gate">v{{ sh.model }}</a>{% else %}<a href="/gate">built-in default</a>{% endif %}
+    · last Jev call: {{ sh.last_call or 'never' }}</p>
+  <p>{% if sh.since %}Since shadow scoring started ({{ sh.since[:10] }}):
+    <strong>{{ sh.scored_new }} of {{ sh.evaluated_new }}</strong> newly evaluated jobs got a Jev
+    score{% if sh.evaluated_new and sh.scored_new < sh.evaluated_new %}
+    <span class="scam-high">: some are missing; see failures below</span>{% endif %}.
+    {% else %}No job has a Jev score yet. New jobs get one when they're evaluated
+    (next pipeline run), or use the backfill below.{% endif %}</p>
+  {% if sh.compared %}
+  <p>Across {{ sh.compared }} jobs with both scores, Jev and DeepSeek would make the same
+    decision (skip / review / gloss) on <strong>{{ sh.agree }}</strong>
+    ({{ (100 * sh.agree / sh.compared) | round | int }}%).</p>
+  {% endif %}
+  {% if sh.moves %}
+  <ul class="meta">{% for k, n in sh.moves.items() | sort(attribute='1', reverse=true) %}<li>{{ n }} × {{ k }}</li>{% endfor %}</ul>
+  <p class="meta"><a href="/jobs?disagree=1">See the disagreements on the Jobs page</a>
+    (turn on "Jev shadow scores" there).</p>
+  {% endif %}
+  {% endif %}
+  {% if sh.backfill.running %}
+  <p>⏳ Backfilling: {{ sh.backfill.done }} / {{ sh.backfill.total }}{% if sh.backfill.failed %}, {{ sh.backfill.failed }} failed{% endif %}…
+    <meta http-equiv="refresh" content="4"></p>
+  {% elif sh.unscored_active %}
+  <form method="post" action="/gate/backfill" class="actions" style="align-items: center;"
+        onsubmit="return confirm('Score {{ sh.unscored_active }} jobs in your review queue and shortlist with Jev now? Cached answers are reused; the rest cost about $0.00025 each.')">
+    <span>{{ sh.unscored_active }} jobs in review/shortlist have no Jev score
+      (≤ ~${{ '%.2f' % (sh.unscored_active * 0.00025) }}).</span>
+    <button class="subtle">Backfill now</button>
+  </form>
+  {% elif sh.backfill.finished_at %}
+  <p class="meta">Backfill finished {{ sh.backfill.finished_at }}: {{ sh.backfill.done }} scored{% if sh.backfill.failed %}, {{ sh.backfill.failed }} failed{% endif %}.</p>
+  {% endif %}
+  {% if sh.failures %}
+  <h4>Recent Jev failures</h4>
+  <table>{% for f in sh.failures %}<tr><td class="meta">{{ f.ts }}</td><td>{{ f.title or f.job_id }}</td><td class="scam-high">{{ f.error }}</td></tr>{% endfor %}</table>
+  {% endif %}
+</div>
+
 <h3>Source failures {% if source_failures %}<span class="meta">(most recent {{ source_failures | length }})</span>{% endif %}</h3>
 {% if source_failures %}
 <table>

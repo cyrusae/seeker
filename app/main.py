@@ -56,6 +56,53 @@ templates.env.filters["days_ago"] = _days_ago
 templates.env.filters["gate_info"] = lambda j: _gate_info(j)
 
 
+_THRESH_CACHE: dict = {"at": 0.0, "t": None}
+
+
+def _gate_thresholds() -> dict:
+    """Active gate thresholds, cached briefly so a page of cards doesn't hit
+    the DB once per card."""
+    import time as _t
+    if _THRESH_CACHE["t"] is None or _t.time() - _THRESH_CACHE["at"] > 30:
+        from . import gate
+        _THRESH_CACHE.update(at=_t.time(), t=gate.active_model()["thresholds"])
+    return _THRESH_CACHE["t"]
+
+
+def _gate_compare(j) -> dict | None:
+    """What DeepSeek did vs what the Jev gate would do, as decisions rather
+    than raw numbers: the two scores live on different scales (DeepSeek's is a
+    0-100 judgment, Jev's a calibrated probability x 100), so a point
+    difference means little; a different decision is what matters."""
+    if j["gate_score"] is None:
+        return None
+    th = _gate_thresholds()
+    info = _gate_info(j)
+    gs = j["gate_score"]
+    if info.get("vetoes"):
+        jev = "skip"
+    else:
+        jev = "gloss" if gs >= th["gloss_min"] else "review" if gs >= th["review_min"] else "skip"
+    ds = None
+    if j["score"] is not None:
+        if j["score"] < settings.review_min_score:
+            ds = "skip"
+        elif j["escalated"] or j["score"] >= settings.escalate_min_score:
+            ds = "gloss"
+        else:
+            ds = "review"
+    return {"jev": jev, "ds": ds, "agree": ds is None or ds == jev, "score": gs,
+            "vetoes": info.get("vetoes") or [], "for": info.get("for") or [],
+            "against": info.get("against") or []}
+
+
+templates.env.filters["gate_cmp"] = _gate_compare
+
+
+def _show_gate(request: Request) -> bool:
+    return request.cookies.get("show_gate") == "1"
+
+
 def _gate_nudge():
     from . import gatefit
     return gatefit.nudge()
@@ -239,7 +286,7 @@ def review(request: Request, applicant: str = "", view: str = "", sort: str = "f
         ]
     resp = templates.TemplateResponse(request, "review.html", {
         "sections": sections, "view": view, "stale_count": len(buckets["stale"]),
-        "sort": sort, "sorts": REVIEW_SORTS,
+        "sort": sort, "sorts": REVIEW_SORTS, "show_gate": _show_gate(request),
         "live_count": len(buckets["recent"]) + len(buckets["aging"]),
         "counts": counts, "applicants": names, "selected": applicant,
     })
@@ -334,10 +381,13 @@ REEVAL_OK = {"pending_user_review", "rejected", "shortlisted", "error", "pending
 
 
 @app.get("/jobs")
-def jobs_page(request: Request, applicant: str = "", status: str = ""):
+def jobs_page(request: Request, applicant: str = "", status: str = "", disagree: int = 0):
     applicant = _sticky_applicant(request, applicant)
+    show_gate = _show_gate(request)
     q = "SELECT * FROM jobs WHERE 1=1"
     args = []
+    if show_gate and disagree:
+        q += " AND gate_score IS NOT NULL"
     if applicant:
         q += " AND applicant_id=?"
         args.append(applicant)
@@ -348,9 +398,12 @@ def jobs_page(request: Request, applicant: str = "", status: str = ""):
         jobs = conn.execute(q + " ORDER BY created_at DESC LIMIT 500", args).fetchall()
         names = _applicants(conn)
         statuses = [r["status"] for r in conn.execute("SELECT DISTINCT status FROM jobs")]
+    if show_gate and disagree:
+        jobs = [j for j in jobs if not (_gate_compare(j) or {"agree": True})["agree"]]
     resp = templates.TemplateResponse(request, "jobs.html", {
         "jobs": jobs, "applicants": names, "selected": applicant,
         "statuses": sorted(statuses), "status_sel": status,
+        "show_gate": show_gate, "disagree": bool(disagree),
     })
     return _remember_applicant(request, resp, applicant)
 
@@ -674,6 +727,23 @@ def profiles_page(request: Request, msg: str = ""):
         "gate_mode": settings.gate_mode})
 
 
+@app.get("/prefs/gate")
+def toggle_gate(on: int = 0, back: str = "/"):
+    """Show/hide Jev shadow scores on Review and Jobs (a per-browser cookie)."""
+    if not back.startswith("/") or back.startswith("//"):
+        back = "/"  # same-site paths only
+    resp = RedirectResponse(back, status_code=303)
+    resp.set_cookie("show_gate", "1" if on else "0", max_age=365 * 24 * 3600)
+    return resp
+
+
+@app.post("/gate/backfill")
+def gate_backfill(background: BackgroundTasks):
+    if not pipeline.BACKFILL_STATUS["running"]:
+        background.add_task(pipeline.backfill_shadow)
+    return RedirectResponse("/status", status_code=303)
+
+
 @app.get("/gate")
 def gate_page(request: Request):
     """Gate model: refit preview (candidate), apply/discard, version history."""
@@ -777,6 +847,38 @@ def usage(request: Request):
     })
 
 
+def _shadow_stats() -> dict:
+    """Is shadow mode working, and how often does it agree with DeepSeek?
+    Coverage: of jobs added since shadow mode first scored anything, how many
+    DeepSeek-evaluated ones also got a Jev score (older jobs never will unless
+    backfilled). Agreement: over every job with both scores, on decisions
+    (skip/review/gloss) rather than raw numbers."""
+    since = db.get_meta("shadow_since")
+    with db.connect() as conn:
+        recent = conn.execute("SELECT * FROM jobs WHERE created_at >= ? AND score IS NOT NULL",
+                              (since,)).fetchall() if since else []
+        both = conn.execute("SELECT * FROM jobs WHERE score IS NOT NULL "
+                            "AND gate_score IS NOT NULL").fetchall()
+        unscored = conn.execute(
+            "SELECT COUNT(*) n FROM jobs WHERE status IN ('pending_user_review','shortlisted') "
+            "AND gate_score IS NULL").fetchone()["n"]
+        last = conn.execute("SELECT MAX(ts) t FROM usage_log WHERE role='gate'").fetchone()["t"]
+    cmp = [c for c in (_gate_compare(j) for j in both) if c and c["ds"]]
+    moves: dict = {}
+    for c in cmp:
+        if not c["agree"]:
+            k = f"DeepSeek {c['ds']} → Jev {c['jev']}"
+            moves[k] = moves.get(k, 0) + 1
+    from . import gate
+    return {"mode": settings.gate_mode, "model": gate.active_model()["version"],
+            "since": since, "evaluated_new": len(recent),
+            "scored_new": sum(1 for j in recent if j["gate_score"] is not None),
+            "agree": sum(c["agree"] for c in cmp), "compared": len(cmp), "moves": moves,
+            "unscored_active": unscored, "last_call": last,
+            "failures": list(reversed(pipeline.GATE_FAILURES)),
+            "backfill": dict(pipeline.BACKFILL_STATUS)}
+
+
 @app.get("/status")
 def status(request: Request):
     from .sources import RECENT_FAILURES
@@ -786,6 +888,7 @@ def status(request: Request):
     return templates.TemplateResponse(request, "status.html", {
         "run_status": pipeline.RUN_STATUS, "pipeline_hour": settings.pipeline_hour,
         "source_failures": list(reversed(RECENT_FAILURES)), "errors": errors,
+        "shadow": _shadow_stats(),
         **_cycle_status(),
     })
 

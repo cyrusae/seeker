@@ -26,6 +26,9 @@
   {% elif stale_count %}
   <a href="/?view=stale&sort={{ sort }}">{{ stale_count }} probably stale, hidden →</a>
   {% endif %}
+  · Jev shadow scores:
+  {% if show_gate %}<strong>shown</strong> / <a href="/prefs/gate?on=0&back={{ back | urlencode }}">hide</a>
+  {% else %}<a href="/prefs/gate?on=1&back={{ back | urlencode }}">show</a>{% endif %}
   · order:
   {% for key, label in sorts.items() %}
     {% if key == sort %}<strong>{{ label }}</strong>{% else %}<a href="/?view={{ view }}&sort={{ key }}">{{ label }}</a>{% endif %}{% if not loop.last %} /{% endif %}
@@ -77,8 +80,6 @@
     {{ j['applicant_id'] }} · {{ j['location'] or '?' }}
     {% if j['salary'] %} · {{ j['salary'] | money }}{% endif %}
     · via {{ j['source'] }}
-    {% set gi = j | gate_info %}
-    {% if j['gate_score'] is not none %} · <span title="Jev gate score (shadow: DeepSeek still decides). {% if gi.get('for') %}For: {{ gi['for'] | join('; ') }}. {% endif %}{% if gi.get('against') %}Against: {{ gi['against'] | join('; ') }}.{% endif %}">Jev {{ j['gate_score'] | round | int }}</span>{% endif %}
     {% set first = j['created_at'] | days_ago %}{% set last = (j['last_seen_at'] or j['created_at']) | days_ago %}
     · <span title="first seen {{ (j['created_at'] or '')[:10] }}; last listed by a source {{ (j['last_seen_at'] or j['created_at'] or '')[:10] }}">
       {%- if last == first %}seen {{ first }}d ago{% else %}first seen {{ first }}d ago, last seen {{ last }}d ago{% endif -%}
@@ -87,6 +88,21 @@
       · <span class="scam-{{ j['scam_risk'] }}">⚠ scam risk: {{ j['scam_risk'] }}</span>
     {% endif %}
   </div>
+  {% if show_gate %}
+  {% set gc = j | gate_cmp %}
+  {% if gc %}
+  <p class="meta gate-line">
+    <strong>Jev {{ gc.score | round | int }}</strong> → would <strong>{{ gc.jev }}</strong>
+    {% if gc.ds %}· DeepSeek {{ j['score'] }} → {{ 'escalated' if gc.ds == 'gloss' else gc.ds }}{% endif %}
+    {% if not gc.agree %}<span class="badge" style="color: var(--warn); border-color: var(--warn);">disagree</span>{% endif %}
+    {% if gc.vetoes %}<br>ruled out: {{ gc.vetoes | join('; ') }}{% endif %}
+    {% if gc['for'] %}<br>for: {{ gc['for'] | join('; ') }}{% endif %}
+    {% if gc.against %}<br>against: {{ gc.against | join('; ') }}{% endif %}
+  </p>
+  {% else %}
+  <p class="meta gate-line">Jev: not scored yet{% if j['score'] is not none %} (evaluated before shadow mode; Status → backfill){% endif %}</p>
+  {% endif %}
+  {% endif %}
   {% if j['similar_to'] %}
   <p class="meta" style="color: var(--warn);">⚠ similar listing already ingested:
     “{{ j['similar_title'] or j['similar_to'] }}”

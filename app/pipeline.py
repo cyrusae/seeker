@@ -323,11 +323,19 @@ def evaluate_job(job_id: str):
         shadow_gate(job_id, profile)
 
 
-def shadow_gate(job_id: str, profile: dict) -> None:
+# Recent shadow-gate failures, shown on the Status tab. In-memory, like the
+# source-failure ring buffer: good enough to answer "is shadow working?".
+from collections import deque  # noqa: E402
+GATE_FAILURES: deque = deque(maxlen=20)
+BACKFILL_STATUS = {"running": False, "done": 0, "total": 0, "failed": 0, "finished_at": None}
+
+
+def shadow_gate(job_id: str, profile: dict) -> bool:
     """Score a job with the Jev gate and store it next to the DeepSeek eval,
-    without touching status. Failures are logged, never fatal: shadow mode
-    must not be able to break the real eval."""
+    without touching status. Failures are recorded, never raised: shadow mode
+    must not be able to break the real eval. Returns True on success."""
     from . import gate
+    job = None
     try:
         with db.connect() as conn:
             job = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
@@ -343,8 +351,38 @@ def shadow_gate(job_id: str, profile: dict) -> None:
         with db.connect() as conn:
             conn.execute("UPDATE jobs SET gate_score=?, gate_req=?, gate_json=? WHERE id=?",
                          (c["gate_score"], ev["req_hash"], json.dumps(summary), job_id))
+        if not db.get_meta("shadow_since"):  # coverage on the Status tab counts from here
+            db.set_meta("shadow_since", db.now())
+        return True
     except Exception as e:  # noqa: BLE001
         print(f"[gate] shadow eval failed for {job_id}: {str(e)[:200]}")
+        GATE_FAILURES.append({"ts": db.now(), "job_id": job_id,
+                              "title": job["title"] if job else None, "error": str(e)[:300]})
+        return False
+
+
+def backfill_shadow(statuses=("pending_user_review", "shortlisted"), workers: int = 6) -> dict:
+    """Give unscored jobs in the given statuses a shadow gate score now,
+    instead of waiting for them to be re-evaluated. Uses cached Jev answers
+    where they exist; otherwise ~$0.00025 per job."""
+    from concurrent.futures import ThreadPoolExecutor
+    marks = ",".join("?" * len(statuses))
+    with db.connect() as conn:
+        rows = conn.execute(f"SELECT id, applicant_id FROM jobs WHERE status IN ({marks}) "
+                            "AND gate_score IS NULL", statuses).fetchall()
+        profiles = {a: db.latest_profile(conn, a) for a in {r["applicant_id"] for r in rows}}
+    todo = [r for r in rows if profiles.get(r["applicant_id"])]
+    BACKFILL_STATUS.update(running=True, done=0, total=len(todo), failed=0, finished_at=None)
+    try:
+        def one(r):
+            ok = shadow_gate(r["id"], profiles[r["applicant_id"]])
+            BACKFILL_STATUS["done"] += 1
+            BACKFILL_STATUS["failed"] += not ok
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            list(pool.map(one, todo))
+    finally:
+        BACKFILL_STATUS.update(running=False, finished_at=db.now())
+    return dict(BACKFILL_STATUS)
 
 
 def pick_spot_checks(since: str) -> int:

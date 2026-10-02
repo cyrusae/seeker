@@ -90,6 +90,14 @@ function probeNow(btn) {
   </label>
 </form>
 
+{% set here = '/jobs?applicant=' ~ selected ~ '&status=' ~ status_sel ~ ('&disagree=1' if disagree else '') %}
+<p class="meta">Jev shadow scores:
+  {% if show_gate %}<strong>shown</strong> / <a href="/prefs/gate?on=0&back={{ here | urlencode }}">hide</a>
+  · {% if disagree %}<strong>showing only jobs where Jev and DeepSeek would decide differently</strong>
+    (<a href="/jobs?applicant={{ selected }}&status={{ status_sel }}">show all</a>)
+    {% else %}<a href="/jobs?applicant={{ selected }}&status={{ status_sel }}&disagree=1">disagreements only</a>{% endif %}
+  {% else %}<a href="/prefs/gate?on=1&back={{ here | urlencode }}">show</a>{% endif %}
+</p>
 <form method="post" action="/jobs/bulk" id="bulk">
   <input type="hidden" name="redirect" value="/jobs?applicant={{ selected }}&status={{ status_sel }}">
   <div class="actions" style="margin: 0.8rem 0; align-items: center;">
@@ -111,6 +119,7 @@ function probeNow(btn) {
   </div>
   <table>
     <tr><th></th><th>title</th><th>who</th><th>status</th><th>score</th>
+        {% if show_gate %}<th title="Jev shadow score → what the gate would do (skip / review / gloss)">Jev</th>{% endif %}
         <th>source</th><th>added</th><th></th></tr>
     {% for j in jobs %}
     <tr>
@@ -122,6 +131,9 @@ function probeNow(btn) {
       <td>{{ j['applicant_id'] }}</td>
       <td><span class="badge st-{{ j['status'] }}">{{ j['status'].replace('_',' ') }}</span></td>
       <td>{{ j['score'] if j['score'] is not none else '—' }}</td>
+      {% if show_gate %}{% set gc = j | gate_cmp %}
+      <td>{% if gc %}<span title="{% if gc.vetoes %}ruled out: {{ gc.vetoes | join('; ') }}. {% endif %}{% if gc['for'] %}for: {{ gc['for'] | join('; ') }}. {% endif %}{% if gc.against %}against: {{ gc.against | join('; ') }}{% endif %}">{{ gc.score | round | int }} → {{ gc.jev }}</span>{% if not gc.agree %} <span class="badge" style="color: var(--warn); border-color: var(--warn);">≠</span>{% endif %}{% else %}—{% endif %}</td>
+      {% endif %}
       <td>{{ j['source'] }}</td>
       <td class="meta">{{ j['created_at'][:10] }}</td>
       <td>
