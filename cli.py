@@ -73,7 +73,8 @@ def cmd_gate_fit(args):
     print("unreviewed jobs that would move:", json.dumps(st["moves"]) or "none")
     for f in st["dealbreaker_flags"]:
         print(f"  ⚑ {f['applicant']}: dealbreaker fired on {f['kept']} kept jobs "
-              f"({f['kept_pct']}%) vs {f['rejected']} rejected — {f['item'][:90]}")
+              f"({f['kept_pct']}%) vs {f['rejected']} rejected ({f['rejected_pct']}%) "
+              f"— {f['item'][:90]}")
     for w in st["warnings"]:
         print("  ! " + w)
     if args.apply:

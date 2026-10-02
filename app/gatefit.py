@@ -284,17 +284,27 @@ def _preview(rows, cand, cur, current, thresholds, weights, applicant_bias) -> d
     # Dealbreakers that fire on jobs you kept: candidates for "penalty".
     fire: dict = defaultdict(lambda: {"kept": 0, "rejected": 0})
     kept_n: dict = defaultdict(int)
+    rej_n: dict = defaultdict(int)
     for x in rows:
         aid = x["job"]["applicant_id"]
         kept_n[aid] += x["y"]
+        rej_n[aid] += 1 - x["y"]
         for q, mt in x["ev"]["meta"].items():
             if mt["kind"] in ("hard", "anti") and (mt.get("severity") or "dealbreaker") == \
                     "dealbreaker" and float(x["ev"]["answers"].get(q, {}).get("noul", 0)) >= gate.VETO_P:
                 fire[(aid, mt["label"])]["kept" if x["y"] else "rejected"] += 1
+    # Flag a dealbreaker that vetoes 5%+ of kept jobs, or one that fires at
+    # least as often on kept jobs as on rejected ones: then it isn't
+    # separating anything, just losing jobs you want (e.g. a qualifier like
+    # "without dual citizenship" being ignored, so it fires on any
+    # "US citizen required").
     flags = [{"applicant": aid, "item": label, **c,
-              "kept_pct": pct(c["kept"], kept_n[aid])}
+              "kept_pct": pct(c["kept"], kept_n[aid]),
+              "rejected_pct": pct(c["rejected"], rej_n[aid])}
              for (aid, label), c in fire.items()
-             if c["kept"] >= 3 and c["kept"] >= 0.05 * kept_n[aid]]
+             if c["kept"] >= 2 and (c["kept"] >= 0.05 * kept_n[aid]
+                                    or c["kept"] / max(kept_n[aid], 1)
+                                    >= c["rejected"] / max(rej_n[aid], 1))]
     flags.sort(key=lambda f: -f["kept"])
     return {"table": table, "moves": dict(moves), "n_unreviewed_scored": len(live),
             "dealbreaker_flags": flags}

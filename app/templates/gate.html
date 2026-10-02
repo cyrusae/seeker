@@ -55,7 +55,8 @@
     <code>"severity": "penalty"</code> in your next profile version.</p>
   <ul>{% for f in st.dealbreaker_flags %}
     <li><strong>{{ f.applicant }}</strong>: fired on {{ f.kept }} kept ({{ f.kept_pct }}%)
-      vs {{ f.rejected }} rejected — {{ f.item }}</li>{% endfor %}</ul>
+      vs {{ f.rejected }} rejected ({{ f.rejected_pct }}%){% if f.kept_pct is not none and f.rejected_pct is not none and f.kept_pct >= f.rejected_pct %}
+      <span style="color: var(--warn);">: fires more on jobs you keep</span>{% endif %} — {{ f.item }}</li>{% endfor %}</ul>
   {% endif %}
 
   <details><summary class="meta">weights</summary>

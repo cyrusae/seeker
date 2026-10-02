@@ -24,7 +24,7 @@ explaining the project to someone else), see
 | Spot checks (3 random skipped jobs/applicant/cycle) | **On** |
 | Cyrus profile full review | **Done**: v12 imported 2026-10-01 |
 | Gate model in use | **v3** (applied 2026-10-01, fit after Cyrus's v12): AUC 0.856 on 1,244 decisions; gloss ≥ 39.2, review ≥ 29.3; penalty weight learned (−0.58); 18 of 174 kept jobs still vetoed. A later preview, v6, ranks marginally worse (0.857 vs 0.860) and isn't applied |
-| Martin profile full review | **Next** (still on v9; do it with Martin) |
+| Martin profile full review | **Next, and blocking**: still on v9. His shadow scores are unreliable (AUC 0.59 vs DeepSeek 0.77; 8 of his 64 review-queue jobs vetoed, 5 by the travel item). **Don't evaluate the gate on his jobs until after his review, and don't finalize pipeline changes without checking their effect on him.** |
 | Live mode (gate decides status, gloss step, gloss-on-open) | **Not built** |
 
 ## Next steps
@@ -45,7 +45,19 @@ explaining the project to someone else), see
    - Review floor keeps ≥ ~97% of kept jobs that weren't vetoed.
    - No dealbreaker fires on more than ~5% of kept jobs.
    - Spot checks: you rarely keep one (if you often do, the floor is too high).
-5. **Build live mode** (see "Live mode design" below).
+5. **Build live mode** (see "Live mode design" below), switchable **per
+   applicant**, so one applicant can go live while the other stays on
+   DeepSeek until their profile and numbers are ready.
+
+**Open item (Cyrus, found 2026-10-01):** the v12 dealbreaker *"Requires US
+citizenship without dual citizenship"* fires on postings that just say "US
+citizen required" (Axon SRE II, Xealth Data Platform, two Amazon WWPS
+ProServe roles, Smartsheet FedRAMP). It hits 3% of kept jobs vs <1% of
+rejects. Jev drops the "without dual citizenship" qualifier. Reword it so the
+posting itself would have to say it, e.g. *"Explicitly excludes dual citizens
+or requires renouncing other citizenships"*, then refit. The Gate page now
+flags any dealbreaker that fires at least as often on kept jobs as on rejected
+ones; the old 5%-of-kept rule missed this one.
 
 ## Evidence so far
 
@@ -201,6 +213,9 @@ CLI: `gate-backtest [--skipped N] [--no-backlog] [--limit N]`,
 
 ## Live mode design (not built yet)
 
+- **Per-applicant rollout:** e.g. `GATE_LIVE_APPLICANTS=cyrus`. Everyone not
+  listed stays on the DeepSeek path (with shadow scoring). Go/no-go criteria
+  are applied per applicant.
 - `GATE_MODE=live`: after the gate runs, set the status from its thresholds:
   `< review_min` → skipped, `≥ review_min` → review, `≥ gloss_min` → also
   gloss. Jobs vetoed by a dealbreaker are skipped.
