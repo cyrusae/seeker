@@ -10,20 +10,28 @@ gave better results and this stayed out of the token budget.
 No agent loops, no cloud services. Every LLM call is single-shot and bounded;
 cost is linear in jobs processed and capped by `MONTHLY_BUDGET_USD`.
 
+**Work in progress:** the scoring gate is being migrated to Jev (typed
+judgments instead of a prose-writing model). It's currently running in shadow
+next to the existing scorer. Status, decisions, evidence and next steps:
+[`docs/jev_gate.md`](docs/jev_gate.md).
+
 ## Architecture
 
 ```
 sources (10 adapters — see Sources — or manual paste-or-URL)
    └→ jobs table (SQLite, status machine)
-        pending_eval → [score: local Qwen] → [escalate: Haiku, if score ≥ threshold]
+        pending_eval → [score: ROLE_SCORE] → [escalate: ROLE_ESCALATE, if score ≥ threshold]
+                     └→ (GATE_MODE=shadow) [Jev gate: typed judgments → gate_score]
         → pending_user_review → (you shortlist/reject in web UI)
+          (+ a few random 🎲 spot checks from auto-skipped jobs each cycle)
         shortlisted → applied ✓ / archived (tracked, not LLM-generated)
+        stale (dismissed from review as closed or too old; not a tuning signal)
 
 Alongside each cycle: closure detection (board-diff + out-of-band liveness
 probe, see below) flags active jobs that quietly disappeared or expired.
 ```
 
-Role → provider routing (`extract`/`score`/`escalate`) is all in `.env`
+Role → provider routing (`extract`/`score`/`escalate`/`gate`) is all in `.env`
 (`ROLE_SCORE=local`, `ROLE_SCORE=openrouter:...`, etc.), so different roles
 can hit different providers in the same run. Two independent fallback layers
 protect an unattended run: paid calls check the monthly budget first and drop
@@ -51,8 +59,13 @@ uv run uvicorn app.main:app --reload
 
 - **Submit** — paste a job posting (or URL) from your phone; extraction + eval
   run automatically. This is the LinkedIn/Indeed path: paste text, don't scrape.
-- **Review** — score, pitch ("why this one"), concerns, scam flag. Shortlist
-  good matches to work from; reject with a note (notes feed the tuning report).
+- **Review** — score, pitch ("why this one"), concerns, scam flag, and (in
+  shadow mode) the Jev gate score with its reasons on hover. Shortlist good
+  matches to work from; reject with a note (notes feed the tuning report).
+  The queue is split by freshness: **Seen recently** / **Not seen recently**,
+  with probably-stale jobs (flagged closed, past a stated deadline, or unseen
+  for `STALE_AFTER_DAYS`) in a separate view where you can dismiss them in
+  bulk. Sort by best fit, newest or oldest.
 - **Jobs** — every job across every status, filterable, with bulk actions
   (re-evaluate, shortlist, dismiss selected) and per-job retry for anything
   that errored out mid-pipeline.
@@ -64,7 +77,8 @@ uv run uvicorn app.main:app --reload
   **Archive** if you change your mind. No LLM calls happen on this page.
 - **Profiles** — upload a new/revised profile JSON, browse versions, pull a
   tuning report per applicant, all from the browser (no shell access needed
-  once it's on the homelab).
+  once it's on the homelab). The **Gate** box and page refit and roll back the
+  Jev gate's weights; a "refit" badge on the nav says when it's due.
 - **Usage** — month-to-date spend vs. budget, per-role token counts, errors,
   last-cycle timing.
 - **Status** — live run/stop controls, a progress bar during long eval passes
@@ -82,21 +96,23 @@ Usage and Status for out-of-band runs.
 1. First profile: paste `docs/interview_spec.md` into any chat model, get JSON,
    `cli.py import-profile`.
 2. Use the system; shortlist / reject-with-feedback / mark applied.
-3. `uv run python cli.py tuning-report yourname > report.md`, take that back to a chat
-   session, import the revised JSON. Versions are kept.
+3. `uv run python cli.py tuning-report yourname > report.md` (or Profiles →
+   download), take that plus `docs/interview_spec.md` to a chat session in
+   **Full review** or **Tune** mode, import the revised JSON. Versions are kept.
 4. After a re-import, expand "re-score against updated profiles…" (Review page)
    or select jobs on the **Jobs** page → **Re-evaluate selected** to refresh
-   old evals.
+   old evals, and refit the gate (Profiles → Gate, "first ask Jev" ticked).
 
 ### What's in the tuning report
 
-`cli.py tuning-report <applicant>` emits Markdown containing: the current
-profile JSON; a score-distribution table by outcome; and every reviewed job
-(APPLIED / SHORTLISTED / ARCHIVED-AFTER-INTEREST / REJECTED) with the model's score, pitch, concerns,
-and your rejection feedback — i.e. both positive and negative examples, so the
-refinement session can see where the model's scores disagreed with your
-decisions. It deliberately includes only titles/pitches, never full posting
-text, so it stays paste-sized no matter how long it runs.
+`cli.py tuning-report <applicant>` emits Markdown built to be read by a model
+in one sitting: the current profile JSON; outcome counts; a table of how often
+each hard filter, anti-criterion and soft preference fires on kept vs rejected
+jobs (from cached Jev answers, no model calls); then only the decisions that
+teach something: kept jobs the scorers undervalued or vetoed, rejects they
+rated highly, and every other reject with your feedback. Agreements are
+counted, not listed. Scope is decisions since the current profile version;
+jobs dismissed as stale are excluded.
 
 ### Updating profiles once it's on the homelab
 
@@ -113,27 +129,19 @@ laptop: `scp` the JSON to the homelab first, or run the whole thing over ssh.)
 
 ## Jev gate (in progress)
 
-A cheaper, more inspectable "worth a look?" gate, being validated in shadow
-before it replaces the DeepSeek score. `app/gate.py` asks Jev (a System One
-model, via OpenRouter) one batch of narrow typed questions per job, built from
-the profile: one per hard filter, anti-criterion and soft preference, plus role
-fit, qualifications, seniority, thin posting, scam risk and passed deadline.
-Policy is code: dealbreakers (plain-string `anti_criteria`/`hard_filters.other`
-items, or `"severity": "dealbreaker"`) veto; everything else feeds a small
-learned logistic blend whose output is the gate score (≈ chance you'd keep it).
+Short version (full record in [`docs/jev_gate.md`](docs/jev_gate.md)):
+`app/gate.py` asks Jev (via OpenRouter) one batch of narrow yes/no and
+scale questions per job, built from the profile. Dealbreakers veto; everything
+else feeds a small logistic blend learned from your decisions, whose output is
+the gate score (≈ chance you'd keep the job).
 
-- `GATE_MODE=shadow` scores every evaluated job alongside DeepSeek
-  (`jobs.gate_score`, shown as "Jev NN" on cards); DeepSeek still decides.
-- `python cli.py gate-backtest` scores your past decisions and writes
-  `data/gate_backtest.md` (fair AUC vs DeepSeek, per-item firing rates).
-- **Profiles → Gate** (or `cli.py gate-fit`) refits the blend from your
-  decisions and previews what would change; nothing applies until you click
-  Apply, and old versions can be rolled back. The nav shows a "refit" badge
-  after ~30 new decisions. All Jev answers are cached in `gate_evals`, so
-  refits are free unless the profile changed.
-- `SPOT_CHECKS_PER_RUN` random below-the-floor jobs per applicant per cycle
-  are surfaced as 🎲 spot checks, so the gate's training data isn't limited to
-  jobs it already liked.
+- `GATE_MODE=off|shadow`: shadow scores every evaluated job alongside the
+  existing scorer, which still decides. Live mode isn't built yet.
+- `cli.py gate-backtest`: score past decisions, write `data/gate_backtest.md`.
+- `cli.py gate-fit` or **Profiles → Gate**: refit, preview, apply, roll back.
+- `SPOT_CHECKS_PER_RUN`: random auto-skipped jobs surfaced for review each cycle.
+- Profile items can be `{"text": ..., "severity": "penalty"}` instead of a
+  plain-string dealbreaker; see `docs/interview_spec.md`.
 
 ## Homelab migration
 
@@ -181,9 +189,17 @@ flagging so one missed poll doesn't false-positive:
   applications" phrase. Network errors / 403 / rate-limits are treated as
   inconclusive, not closed.
 
-Flagged jobs surface on Review for you to dismiss (mark "still applying
-anyway") or let go; dismissal is permanent (`closure_dismissed`) so it won't
-re-flag on the next sweep.
+Flagged jobs move to Review's **probably stale** view. "↺ Not closed" clears
+the flag permanently (`closure_dismissed`, and counts as a fresh sighting);
+"✖ Archive as closed" moves the job to status `stale` (restorable from Jobs →
+status: stale → Restore). Separately, `last_seen_at` records when a source last
+listed each job (or its direct URL last checked out), which drives the
+seen-recently / not-seen-recently split, and the Jev gate reads stated
+application deadlines and flags ones that have passed.
+
+**Changing `.env`** (any setting, including `GATE_MODE`) needs a server
+restart: settings are read once at startup, and `--reload` only watches `.py`
+files. Under Docker, use `docker compose up -d` (not `restart`).
 
 ## Notifications
 
