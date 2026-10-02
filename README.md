@@ -140,6 +140,9 @@ the gate score (≈ chance you'd keep the job).
 - `cli.py gate-backtest`: score past decisions, write `data/gate_backtest.md`.
 - `cli.py gate-fit` or **Profiles → Gate**: refit, preview, apply, roll back.
 - `SPOT_CHECKS_PER_RUN`: random auto-skipped jobs surfaced for review each cycle.
+- **Gate lab** tab (shown while "Jev shadow scores" is on): per-job "why"
+  breakdowns with on-demand posting evidence, per-criterion firing rates, and
+  before/after reports for profile changes.
 - Profile items can be `{"text": ..., "severity": "penalty"}` instead of a
   plain-string dealbreaker; see `docs/interview_spec.md`.
 

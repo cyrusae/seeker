@@ -72,6 +72,10 @@ details.posting .desc { max-height: 22rem; overflow-y: auto; font-size: 0.88rem;
   {% set _nudge = gate_nudge() %}
   <a href="/profiles" {% if path.startswith('/profiles') or path.startswith('/gate') %}class="here"{% endif %}
      {% if _nudge %}title="{{ _nudge }}: time to refit (Profiles → Gate)"{% endif %}>Profiles{% if _nudge %} <span class="badge" style="color: var(--warn); border-color: var(--warn);">refit</span>{% endif %}</a>
+  {% if request.cookies.get('show_gate') == '1' %}
+  <a href="/gate/lab" {% if path.startswith('/gate/lab') or path.startswith('/gate/job') or path.startswith('/gate/criteria') or path.startswith('/gate/changes') %}class="here"{% endif %}
+     title="troubleshoot the Jev gate (shown while Jev shadow scores are on)">Gate lab</a>
+  {% endif %}
   <a href="/usage" {% if path.startswith('/usage') %}class="here"{% endif %}>Usage</a>
   <a href="/status" {% if path.startswith('/status') %}class="here"{% endif %}>Status</a>
 </nav>

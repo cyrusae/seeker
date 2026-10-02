@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+{% set j = job %}
+<p class="meta"><a href="/gate/lab">← Gate lab</a> · <a href="/gate/criteria?applicant={{ j['applicant_id'] }}">Criteria</a></p>
+<h2>{{ j['title'] }} — {{ j['company'] or '?' }}</h2>
+<p class="meta">{{ j['applicant_id'] }} · <span class="badge st-{{ j['status'] }}">{{ j['status'].replace('_',' ') }}</span>
+  · {{ j['location'] or '?' }}{% if j['url'] %} · <a href="{{ j['url'] }}" target="_blank">posting ↗</a>{% endif %}
+  · gate model {{ 'v%d' % model.version if model.version else 'default' }} · profile v{{ profile_version }}</p>
+{% if msg %}<p class="msg">{{ msg }}</p>{% endif %}
+
+{% if not x %}
+<div class="card">
+  <p>Jev hasn't been asked about this job{% if history %} under the current profile{% endif %}.</p>
+  <form method="post" action="/gate/job/{{ j['id'] }}/score"><button>Ask Jev now (~$0.0003)</button></form>
+</div>
+{% else %}
+{% if not current %}
+<div class="card"><p style="color: var(--warn);">These answers are from profile v{{ shown_version }}, not the
+  current v{{ profile_version }}, so they may be out of date.</p>
+  <form method="post" action="/gate/job/{{ j['id'] }}/score"><button class="subtle">Re-ask under v{{ profile_version }} (~$0.0003)</button></form></div>
+{% endif %}
+
+<div class="card">
+  <h3>Jev {{ x.score | round(1) }} → would <strong>{{ x.bucket }}</strong>
+    {% if ds_bucket %}<span class="meta"> · DeepSeek {{ j['score'] }} → {{ 'escalated' if ds_bucket == 'gloss' else ds_bucket }}</span>{% endif %}
+    {% if label == 1 %}<span class="badge st-shortlisted">you kept this</span>{% elif label == 0 %}<span class="badge st-rejected">you rejected this</span>{% endif %}</h3>
+  <h4>In plain words</h4>
+  <ul>{% for w in x.words %}<li>{{ w }}</li>{% endfor %}</ul>
+
+  <h4>Score arithmetic</h4>
+  <table>
+    <tr><th>term</th><th>value</th><th>× weight</th><th>= contribution</th></tr>
+    {% for r in x.breakdown %}
+    <tr><td>{{ r.label }}</td>
+      <td>{{ '%.2f' % r.value if r.value is not none else '' }}</td>
+      <td>{{ '%+.2f' % r.weight if r.weight is not none else '' }}</td>
+      <td style="text-align: right;">{{ '%+.2f' % r.contrib }}</td></tr>
+    {% endfor %}
+    <tr><td colspan="3"><strong>logit → probability × 100</strong></td>
+      <td style="text-align: right;"><strong>{{ '%+.2f' % x.logit }} → {{ '%.1f' % x.prob }}</strong></td></tr>
+    {% if x.vetoes %}<tr><td colspan="3" style="color: var(--bad);">veto: capped at 2</td><td style="text-align: right;"><strong>{{ x.score }}</strong></td></tr>{% endif %}
+  </table>
+  <p class="meta">Thresholds: review ≥ {{ x.thresholds.review_min }}, gloss ≥ {{ x.thresholds.gloss_min }}.
+    Dealbreakers veto at p ≥ 0.80; penalties and preferences count from 0.50.</p>
+</div>
+
+<h3>Every question</h3>
+<p class="meta">Vetoes first, then other hard filters and anti-criteria by probability, then the core judgments, then preferences.
+  “Find evidence” asks Jev which line of the posting is behind an answer: about $0.0003, saved, so asking again is free.</p>
+<table>
+  <tr><th>kind</th><th>severity / weight</th><th>answer</th><th></th><th>item</th></tr>
+  {% for q in x.questions %}
+  {% set ev = evidence.get(q.qid) %}
+  <tr id="q-{{ q.qid }}" {% if q.status == 'VETO' %}style="background: color-mix(in srgb, var(--bad) 12%, transparent);"{% endif %}>
+    <td>{{ q.kind }}</td>
+    <td>{% if q.kind in ('hard', 'anti') %}{{ q.severity }}{% elif q.kind == 'soft' %}{{ {3.0: 'high', 2.0: 'medium', 1.0: 'low'}.get(q.weight, '') }}{% endif %}</td>
+    <td>{% if q.p is defined %}<strong>{{ '%.2f' % q.p }}</strong>{% else %}{{ q.top }} <span class="meta">({{ '%.0f' % (q.top_p * 100) }}%)</span>{% endif %}</td>
+    <td>{% if q.status %}<span class="badge" {% if q.status == 'VETO' %}style="color: var(--bad); border-color: var(--bad);"{% elif q.status == 'close call' %}style="color: var(--warn); border-color: var(--warn);"{% endif %}>{{ q.status }}</span>{% endif %}</td>
+    <td>{{ q.label }}
+      {% if q.levels is defined %}<br><span class="meta">{% for l in q.levels %}{{ l.label }} {{ '%.0f' % (l.p * 100) }}%{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}
+      {% if ev %}
+        <div class="meta" style="margin-top: 0.3rem;">
+          {% if ev.lines and ev.lines[0].text %}
+          {% for l in ev.lines %}{% if l.text %}<div>{{ '%.0f' % (l.p * 100) }}% · “{{ l.text }}”</div>{% endif %}{% endfor %}
+          {% else %}No line of the posting supports this.{% endif %}
+          <span>(some line shows it: {{ '%.2f' % ev.exists }}{% if ev.truncated %}; long posting, only the first 250 lines were searched{% endif %})</span>
+        </div>
+      {% elif current and q.p is defined and q.kind in ('hard', 'anti', 'soft', 'flag') %}
+        <form method="post" action="/gate/job/{{ j['id'] }}/evidence/{{ q.qid }}" style="display: inline;">
+          <button class="subtle" style="font-size: 0.75rem; padding: 0.1rem 0.4rem;">find evidence</button></form>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% if history | length > 1 %}
+<h3>History for this job</h3>
+<p class="meta">Each time Jev answered about this job (scored with today's gate model, so differences come from the answers),
+  and which answers moved by 0.15 or more since the previous time.</p>
+{% for h in history %}
+<div class="card">
+  <p><strong>profile v{{ h.profile_version }}</strong> <span class="meta">asked {{ h.created_at[:16].replace('T', ' ') }}</span>
+    · Jev {{ h.score | round(1) }}{% if h.vetoes %} <span style="color: var(--bad);">(vetoed: {{ h.vetoes | join('; ') }})</span>{% endif %}</p>
+  {% if h.changes %}
+  <ul class="meta">{% for c in h.changes %}
+    <li>{{ c.kind }} · {{ c.label }}: {% if c.change == 'moved' %}{{ c.before }} → <strong>{{ c.after }}</strong>{% elif c.change == 'added' %}added ({{ c.after }}){% else %}removed (was {{ c.before }}){% endif %}</li>
+  {% endfor %}</ul>
+  {% elif not loop.first %}<p class="meta">No answer moved by 0.15 or more.</p>{% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+<details class="posting"><summary>full posting text</summary><div class="desc">{{ j['description'] }}</div></details>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Gate lab: criteria</h2>
+<p class="meta"><a href="/gate/lab">Overview</a> · <strong>Criteria</strong> · <a href="/gate/changes">Profile changes</a> · <a href="/gate">Gate model</a></p>
+
+<form method="get" action="/gate/criteria" class="actions" style="align-items: center;">
+  <select name="applicant" onchange="this.form.submit()">
+    {% for a in applicants %}<option value="{{ a }}" {% if a == applicant %}selected{% endif %}>{{ a }}</option>{% endfor %}
+  </select>
+  <label style="font-weight: 400;">counts as fired at p ≥
+    <select name="t" onchange="this.form.submit()">
+      {% for v in (0.5, 0.65, 0.8, 0.9) %}<option value="{{ v }}" {% if (v - threshold) | abs < 0.001 %}selected{% endif %}>{{ v }}</option>{% endfor %}
+    </select></label>
+  {% if item %}<input type="hidden" name="item" value="{{ item }}">{% endif %}
+</form>
+<p class="meta">Profile v{{ version }} · {{ n_jobs }} jobs with answers under it ({{ groups.kept }} kept, {{ groups.rejected }} rejected,
+  {{ groups.other }} other). Dealbreakers veto at 0.80; lower the threshold to see near misses.
+  ⚑ = a dealbreaker that fires on 5%+ of kept jobs, or at least as often on kept jobs as on rejected ones.</p>
+
+{% if item %}
+<div class="card">
+  <h3>{{ item_label }}</h3>
+  <p class="meta">Jobs where this is at p ≥ {{ '%.2f' % ([threshold - 0.3, 0] | max) }}, strongest first; the bold ones count as fired at {{ threshold }}.
+    <a href="/gate/criteria?applicant={{ applicant }}&t={{ threshold }}">back to all criteria</a></p>
+  <table>
+    {% for x in fired_jobs %}
+    <tr><td>{% if x.fired %}<strong>{{ '%.2f' % x.p }}</strong>{% else %}{{ '%.2f' % x.p }}{% endif %}</td>
+      <td><a href="/gate/job/{{ x.job['id'] }}#q-{{ item }}">{{ x.job['title'] }} — {{ x.job['company'] or '?' }}</a></td>
+      <td><span class="badge st-{{ x.job['status'] }}">{{ x.job['status'].replace('_',' ') }}</span></td>
+      <td class="meta">{{ x.job['feedback'] or '' }}</td></tr>
+    {% else %}<tr><td class="meta">Nothing near the threshold.</td></tr>{% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<table>
+  <tr><th>kind</th><th>severity / weight</th><th>fires on kept</th><th>rejected</th><th>other</th><th>item</th></tr>
+  {% for r in rows %}
+  <tr {% if r.qid == item %}style="background: color-mix(in srgb, var(--warn) 12%, transparent);"{% endif %}>
+    <td>{{ r.kind }}</td>
+    <td>{{ r.severity or {3.0: 'high', 2.0: 'medium', 1.0: 'low'}.get(r.weight, '') }}</td>
+    <td>{{ r.kept }} <span class="meta">({{ '%.0f' % (r.kept_rate * 100) }}%)</span>{% if r.flag %} <span style="color: var(--warn);">⚑</span>{% endif %}</td>
+    <td>{{ r.rejected }} <span class="meta">({{ '%.0f' % (r.rejected_rate * 100) }}%)</span></td>
+    <td>{{ r.other }}</td>
+    <td><a href="/gate/criteria?applicant={{ applicant }}&t={{ threshold }}&item={{ r.qid }}">{{ r.label }}</a></td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="meta">For preferences, “fires” means Jev thinks the job offers it. A useful preference fires more on kept jobs than rejected ones.</p>
+{% endblock %}

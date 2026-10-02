@@ -93,6 +93,7 @@
   {% if gc %}
   <p class="meta gate-line">
     <strong>Jev {{ gc.score | round | int }}</strong> → would <strong>{{ gc.jev }}</strong>
+    · <a href="/gate/job/{{ j['id'] }}" title="full breakdown: every answer, the score arithmetic, history">why?</a>
     {% if gc.ds %}· DeepSeek {{ j['score'] }} → {{ 'escalated' if gc.ds == 'gloss' else gc.ds }}{% endif %}
     {% if not gc.agree %}<span class="badge" style="color: var(--warn); border-color: var(--warn);">disagree</span>{% endif %}
     {% if gc.vetoes %}<br>ruled out: {{ gc.vetoes | join('; ') }}{% endif %}

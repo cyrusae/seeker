@@ -349,6 +349,13 @@ def apply(version: int) -> int:
     touched here — which status a score maps to is the pipeline's call."""
     gate.activate(version)
     model = gate.active_model()
+    # A refit after a profile change is the natural moment to record what the
+    # change did; snapshot a change report for any applicant missing one.
+    try:
+        from . import gatelab
+        gatelab.snapshot_pending()
+    except Exception as e:  # noqa: BLE001 — never block an apply on a report
+        print(f"[gatelab] change-report snapshot failed: {e}")
     n = 0
     with db.connect() as conn:
         rows = conn.execute(

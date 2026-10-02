@@ -132,7 +132,7 @@ function probeNow(btn) {
       <td><span class="badge st-{{ j['status'] }}">{{ j['status'].replace('_',' ') }}</span></td>
       <td>{{ j['score'] if j['score'] is not none else '—' }}</td>
       {% if show_gate %}{% set gc = j | gate_cmp %}
-      <td>{% if gc %}<span title="{% if gc.vetoes %}ruled out: {{ gc.vetoes | join('; ') }}. {% endif %}{% if gc['for'] %}for: {{ gc['for'] | join('; ') }}. {% endif %}{% if gc.against %}against: {{ gc.against | join('; ') }}{% endif %}">{{ gc.score | round | int }} → {{ gc.jev }}</span>{% if not gc.agree %} <span class="badge" style="color: var(--warn); border-color: var(--warn);">≠</span>{% endif %}{% else %}—{% endif %}</td>
+      <td>{% if gc %}<span title="{% if gc.vetoes %}ruled out: {{ gc.vetoes | join('; ') }}. {% endif %}{% if gc['for'] %}for: {{ gc['for'] | join('; ') }}. {% endif %}{% if gc.against %}against: {{ gc.against | join('; ') }}{% endif %}"><a href="/gate/job/{{ j['id'] }}">{{ gc.score | round | int }} → {{ gc.jev }}</a></span>{% if not gc.agree %} <span class="badge" style="color: var(--warn); border-color: var(--warn);">≠</span>{% endif %}{% else %}—{% endif %}</td>
       {% endif %}
       <td>{{ j['source'] }}</td>
       <td class="meta">{{ j['created_at'][:10] }}</td>

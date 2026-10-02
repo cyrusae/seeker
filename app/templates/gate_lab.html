@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Gate lab</h2>
+<p class="meta"><strong>Overview</strong> · <a href="/gate/criteria">Criteria</a> ·
+  <a href="/gate/changes">Profile changes</a> · <a href="/gate">Gate model</a> ·
+  Troubleshooting views for the Jev gate. Everything here comes from stored answers and
+  the model's own numbers; nothing is generated.</p>
+
+<form method="get" action="/gate/lab" class="actions" style="align-items: center; max-width: 40rem;">
+  <select name="applicant" onchange="this.form.submit()">
+    <option value="">all applicants</option>
+    {% for a in applicants %}<option value="{{ a }}" {% if a == selected %}selected{% endif %}>{{ a }}</option>{% endfor %}
+  </select>
+  <input type="text" name="q" value="{{ q }}" placeholder="find a job by title or company" style="flex: 1;">
+  <button class="subtle">Find</button>
+</form>
+
+{% if q %}
+<h3>Matches for “{{ q }}”</h3>
+<table>
+  {% for j in found %}
+  <tr><td><a href="/gate/job/{{ j['id'] }}">{{ j['title'] }} — {{ j['company'] or '?' }}</a></td>
+    <td>{{ j['applicant_id'] }}</td><td><span class="badge st-{{ j['status'] }}">{{ j['status'].replace('_',' ') }}</span></td>
+    <td>{{ 'Jev %d' % j['gate_score'] if j['gate_score'] is not none else 'no Jev score' }}</td></tr>
+  {% else %}<tr><td class="meta">No jobs match.</td></tr>{% endfor %}
+</table>
+{% endif %}
+
+<h3>Vetoed jobs you kept or are reviewing <span class="meta">({{ vetoed | length }})</span></h3>
+<p class="meta">A dealbreaker capped these at {{ 2 }}. If you kept one, the dealbreaker is probably misfiring.
+  Open a job to see which answer fired and the posting line behind it.</p>
+<table>
+  {% for v in vetoed %}
+  <tr><td><a href="/gate/job/{{ v.job['id'] }}">{{ v.job['title'] }} — {{ v.job['company'] or '?' }}</a></td>
+    <td>{{ v.job['applicant_id'] }}</td><td><span class="badge st-{{ v.job['status'] }}">{{ v.job['status'].replace('_',' ') }}</span></td>
+    <td class="meta">{{ v.vetoes | join('; ') }}</td></tr>
+  {% else %}<tr><td class="meta">None.</td></tr>{% endfor %}
+</table>
+
+<h3>Sharpest disagreements with DeepSeek <span class="meta">({{ n_sharp }}{% if n_sharp > sharp | length %}, showing {{ sharp | length }}{% endif %})</span></h3>
+<p class="meta">One scorer would skip the job and the other would show it to you. Kept jobs first.
+  Jobs you've decided on were part of the gate's training, so its agreement there looks better than it is.</p>
+<table>
+  <tr><th>job</th><th>who</th><th>status</th><th>DeepSeek</th><th>Jev</th></tr>
+  {% for x in sharp %}
+  <tr><td><a href="/gate/job/{{ x.job['id'] }}">{{ x.job['title'] }} — {{ x.job['company'] or '?' }}</a></td>
+    <td>{{ x.job['applicant_id'] }}</td><td><span class="badge st-{{ x.job['status'] }}">{{ x.job['status'].replace('_',' ') }}</span></td>
+    <td>{{ x.job['score'] }} → {{ x.ds }}</td><td>{{ x.job['gate_score'] | round | int }} → {{ x.jev }}</td></tr>
+  {% else %}<tr><td class="meta">None.</td></tr>{% endfor %}
+</table>
+
+{% if reports %}
+<h3>Recent profile change reports</h3>
+<ul>{% for r in reports %}<li><a href="/gate/changes?report={{ r.id }}">{{ r.applicant_id }} v{{ r.from_version }} → v{{ r.to_version }}</a>
+  <span class="meta">saved {{ r.created_at[:16].replace('T', ' ') }}</span></li>{% endfor %}</ul>
+{% endif %}
+{% endblock %}

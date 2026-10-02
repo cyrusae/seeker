@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Gate lab: profile changes</h2>
+<p class="meta"><a href="/gate/lab">Overview</a> · <a href="/gate/criteria">Criteria</a> · <strong>Profile changes</strong> · <a href="/gate">Gate model</a></p>
+
+<form method="get" action="/gate/changes" class="actions" style="align-items: center;">
+  <select name="applicant" onchange="this.form.submit()">
+    {% for a in applicants %}<option value="{{ a }}" {% if a == selected %}selected{% endif %}>{{ a }}</option>{% endfor %}
+  </select>
+  {% if versions | length >= 2 %}
+  <label style="font-weight: 400;">compare v<select name="frm">{% for v in versions %}<option value="{{ v }}" {% if r and v == r.from_version %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+    → v<select name="to">{% for v in versions %}<option value="{{ v }}" {% if r and v == r.to_version %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+  <button class="subtle">Compute</button>
+  {% endif %}
+</form>
+<p class="meta">Only profile versions Jev has answered questions under can be compared ({{ versions | join(', ') or 'none yet' }}).
+  A report is saved automatically when you apply a refit after a profile change.</p>
+
+{% if reports %}
+<p class="meta">Saved: {% for x in reports %}<a href="/gate/changes?report={{ x.id }}">v{{ x.from_version }}→v{{ x.to_version }} ({{ x.created_at[:10] }})</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% endif %}
+
+{% if not r %}
+<p>Nothing to compare yet: {{ selected }} needs answers under at least two profile versions.</p>
+{% else %}
+<div class="card">
+  <h3>{{ r.applicant }}: profile v{{ r.from_version }} → v{{ r.to_version }}</h3>
+  <p class="meta">{% if saved %}Saved report{% else %}Computed just now{% endif %} ({{ r.computed_at[:16].replace('T', ' ') }}),
+    scored with gate model {{ 'v%d' % r.gate_model if r.gate_model else 'default' }} on both sides, so differences come from Jev's answers, not the weights.
+    {% if not saved %}</p>
+    <form method="post" action="/gate/changes/snapshot" style="display: inline;">
+      <input type="hidden" name="applicant" value="{{ r.applicant }}"><input type="hidden" name="frm" value="{{ r.from_version }}"><input type="hidden" name="to" value="{{ r.to_version }}">
+      <button class="subtle">Save this report</button></form><p class="meta">{% endif %}</p>
+  {% if r.note %}<p><strong>What v{{ r.to_version }} was trying to fix:</strong> {{ r.note }}</p>{% endif %}
+
+  <h4>What changed in the profile</h4>
+  <ul>
+    {% for x in r.criteria.reworded %}<li>reworded ({{ x.kind }}): “{{ x.before }}” → “{{ x.after }}”</li>{% endfor %}
+    {% for x in r.criteria.added %}<li>added ({{ x.kind }}): “{{ x.label }}”</li>{% endfor %}
+    {% for x in r.criteria.removed %}<li>removed ({{ x.kind }}): “{{ x.label }}”</li>{% endfor %}
+    {% for x in r.criteria.changed %}<li>{{ x.kind }} “{{ x.label }}”: {{ x.before }} → {{ x.after }}</li>{% endfor %}
+    {% for x in r.criteria.other %}<li>{{ x }}</li>{% endfor %}
+    {% if not (r.criteria.reworded or r.criteria.added or r.criteria.removed or r.criteria.changed or r.criteria.other) %}<li class="meta">No differences found.</li>{% endif %}
+  </ul>
+
+  <h4>Effect</h4>
+  <p>Measured on <strong>{{ r.coverage.common }}</strong> jobs answered under both versions
+    ({{ r.coverage.decided }} you've decided on).
+    {% if r.coverage.only_after %}{{ r.coverage.only_after }} more have answers only under v{{ r.to_version }}.{% endif %}</p>
+  <table>
+    <tr><th></th><th>v{{ r.from_version }}</th><th>v{{ r.to_version }}</th></tr>
+    <tr><td>kept jobs vetoed by a dealbreaker</td><td>{{ r.kept_vetoed.before }}</td><td><strong>{{ r.kept_vetoed.after }}</strong></td></tr>
+    <tr><td>ranking quality, AUC (5-fold CV, this applicant)</td>
+      <td>{{ '%.3f' % r.auc.before_cv if r.auc.before_cv is not none else '–' }}</td>
+      <td><strong>{{ '%.3f' % r.auc.after_cv if r.auc.after_cv is not none else '–' }}</strong></td></tr>
+    <tr><td class="meta">DeepSeek on the same jobs ({{ r.auc.n_fair }} it scored)</td>
+      <td colspan="2" class="meta">{{ '%.3f' % r.auc.deepseek_fair if r.auc.deepseek_fair is not none else '–' }}</td></tr>
+    <tr><td>re-asking Jev under v{{ r.to_version }}</td><td colspan="2">${{ '%.3f' % r.reask_cost }} ({{ r.reask_calls }} calls)</td></tr>
+  </table>
+
+  <h4>Each criterion, before → after</h4>
+  <p class="meta">How often it fires on kept / rejected jobs among the jobs answered under both versions
+    (dealbreakers and penalties at p ≥ 0.80, preferences at 0.50).</p>
+  <table>
+    <tr><th>kind</th><th>kept: before → after</th><th>rejected: before → after</th><th>item</th></tr>
+    {% for i in r['items'] %}
+    {% set b, a = i.before, i.after %}
+    {% if b or a %}
+    <tr {% if b and a and (b.kept != a.kept or b.rejected != a.rejected) %}style="font-weight: 600;"{% endif %}>
+      <td>{{ i.kind }}{% if i.severity %} · {{ i.severity }}{% endif %}</td>
+      <td>{{ b.kept if b else '–' }} → {{ a.kept if a else '–' }}</td>
+      <td>{{ b.rejected if b else '–' }} → {{ a.rejected if a else '–' }}</td>
+      <td>{{ i.label }}{% if i.reworded_from %}<br><span class="meta">was: {{ i.reworded_from }}</span>{% endif %}{% if i.removed %} <span class="meta">(removed)</span>{% endif %}</td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </table>
+
+  <h4>Jobs whose outcome changed <span class="meta">({{ r.n_moved }})</span></h4>
+  {% if r.transitions %}<p class="meta">{% for k, n in r.transitions.items() %}{{ n }} × {{ k }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+  <table>
+    {% for m in r.moved %}
+    <tr><td><a href="/gate/job/{{ m.id }}">{{ m.title }} — {{ m.company or '?' }}</a></td>
+      <td><span class="badge st-{{ m.status }}">{{ m.status.replace('_',' ') }}</span></td>
+      <td>{{ m.before }} ({{ m.bucket_before }}) → <strong>{{ m.after }} ({{ m.bucket_after }})</strong></td>
+      <td class="meta">{% if m.vetoes_before != m.vetoes_after %}{% if m.vetoes_before %}was vetoed: {{ m.vetoes_before | join('; ') }}{% endif %}{% if m.vetoes_after %} now vetoed: {{ m.vetoes_after | join('; ') }}{% endif %}{% endif %}</td></tr>
+    {% else %}<tr><td class="meta">No job changed bucket.</td></tr>{% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endblock %}

@@ -137,6 +137,11 @@ def init_db():
             conn.execute("ALTER TABLE jobs ADD COLUMN missed_count INTEGER NOT NULL DEFAULT 0")
         if "closure_dismissed" not in cols:
             conn.execute("ALTER TABLE jobs ADD COLUMN closure_dismissed INTEGER NOT NULL DEFAULT 0")
+        pcols = {r[1] for r in conn.execute("PRAGMA table_info(profiles)")}
+        if "note" not in pcols:
+            # optional "what I was trying to fix" for a profile version,
+            # shown at the top of its gate change report
+            conn.execute("ALTER TABLE profiles ADD COLUMN note TEXT")
         if "gate_score" not in cols:
             # Jev gate result (shadow or live): score, the gate_evals request
             # it came from (so a refit can rescore without a model call), and
@@ -158,8 +163,9 @@ def init_db():
 
 # --- profiles ---------------------------------------------------------------
 
-def import_profile(profile: dict) -> int:
-    """Store a new version of an applicant profile. Returns the version."""
+def import_profile(profile: dict, note: str | None = None) -> int:
+    """Store a new version of an applicant profile. Returns the version.
+    `note`: optional "what this version is trying to fix"."""
     applicant_id = profile["applicant_id"]
     with connect() as conn:
         row = conn.execute(
@@ -167,8 +173,10 @@ def import_profile(profile: dict) -> int:
         ).fetchone()
         version = (row["v"] or 0) + 1
         conn.execute(
-            "INSERT INTO profiles (id, applicant_id, version, json, created_at) VALUES (?,?,?,?,?)",
-            (new_id(), applicant_id, version, json.dumps(profile, sort_keys=True), now()),
+            "INSERT INTO profiles (id, applicant_id, version, json, created_at, note) "
+            "VALUES (?,?,?,?,?,?)",
+            (new_id(), applicant_id, version, json.dumps(profile, sort_keys=True), now(),
+             (note or "").strip() or None),
         )
     return version
 

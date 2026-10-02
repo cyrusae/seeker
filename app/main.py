@@ -744,6 +744,95 @@ def gate_backfill(background: BackgroundTasks):
     return RedirectResponse("/status", status_code=303)
 
 
+# --- Gate lab (troubleshooting) ------------------------------------------------
+
+@app.get("/gate/lab")
+def gate_lab(request: Request, applicant: str = "", q: str = ""):
+    from . import gatelab
+    applicant = _sticky_applicant(request, applicant)
+    with db.connect() as conn:
+        names = _applicants(conn)
+    resp = templates.TemplateResponse(request, "gate_lab.html", {
+        **gatelab.overview(applicant or None, q), "applicants": names, "selected": applicant,
+        "reports": gatelab.list_reports(applicant or None)[:8]})
+    return _remember_applicant(request, resp, applicant)
+
+
+@app.get("/gate/job/{job_id}")
+def gate_job(request: Request, job_id: str, msg: str = ""):
+    from . import gatelab
+    data = gatelab.inspect(job_id)
+    if data is None:
+        return PlainTextResponse("unknown job", status_code=404)
+    return templates.TemplateResponse(request, "gate_job.html", {**data, "msg": msg})
+
+
+@app.post("/gate/job/{job_id}/evidence/{qid}")
+def gate_job_evidence(job_id: str, qid: str):
+    from . import gatelab
+    try:
+        gatelab.find_evidence(job_id, qid)
+        msg = ""
+    except Exception as e:  # noqa: BLE001 — show it on the page
+        msg = f"Evidence lookup failed: {str(e)[:200]}"
+    return RedirectResponse(f"/gate/job/{job_id}?msg={msg}#q-{qid}", status_code=303)
+
+
+@app.post("/gate/job/{job_id}/score")
+def gate_job_score(job_id: str):
+    """Ask Jev about this job now (one call) — for jobs with no current answers."""
+    with db.connect() as conn:
+        j = conn.execute("SELECT applicant_id FROM jobs WHERE id=?", (job_id,)).fetchone()
+        prof = db.latest_profile(conn, j["applicant_id"]) if j else None
+    ok = bool(prof) and pipeline.shadow_gate(job_id, prof)
+    return RedirectResponse(f"/gate/job/{job_id}" + ("" if ok else "?msg=Jev call failed; see Status"),
+                            status_code=303)
+
+
+@app.get("/gate/criteria")
+def gate_criteria(request: Request, applicant: str = "", item: str = "", t: float = 0.8):
+    from . import gatelab
+    applicant = _sticky_applicant(request, applicant)
+    with db.connect() as conn:
+        names = _applicants(conn)
+    applicant = applicant or (names[0] if names else "")
+    t = min(max(t, 0.05), 0.99)
+    resp = templates.TemplateResponse(request, "gate_criteria.html", {
+        **gatelab.criteria_view(applicant, t, item or None), "applicants": names})
+    return _remember_applicant(request, resp, applicant)
+
+
+@app.get("/gate/changes")
+def gate_changes(request: Request, applicant: str = "", frm: int = 0, to: int = 0, report: int = 0):
+    """A saved change report (report=id), or one computed now for frm→to
+    (default: the two latest profile versions with Jev answers)."""
+    from . import gatelab
+    applicant = _sticky_applicant(request, applicant)
+    with db.connect() as conn:
+        names = _applicants(conn)
+    applicant = applicant or (names[0] if names else "")
+    data, saved = None, False
+    if report:
+        data, saved = gatelab.get_report(report), True
+        applicant = data["applicant"] if data else applicant
+    else:
+        pair = (frm, to) if frm and to else gatelab.default_pair(applicant)
+        if pair:
+            data = gatelab.compute_change_report(applicant, *pair)
+    resp = templates.TemplateResponse(request, "gate_changes.html", {
+        "r": data, "saved": saved, "applicants": names, "selected": applicant,
+        "versions": gatelab._versions_with_answers(applicant),
+        "reports": gatelab.list_reports(applicant)})
+    return _remember_applicant(request, resp, applicant)
+
+
+@app.post("/gate/changes/snapshot")
+def gate_changes_snapshot(applicant: str = Form(...), frm: int = Form(...), to: int = Form(...)):
+    from . import gatelab
+    rid = gatelab.save_report(gatelab.compute_change_report(applicant, frm, to))
+    return RedirectResponse(f"/gate/changes?report={rid}", status_code=303)
+
+
 @app.get("/gate")
 def gate_page(request: Request):
     """Gate model: refit preview (candidate), apply/discard, version history."""
@@ -781,7 +870,7 @@ def gate_discard(version: int):
 
 
 @app.post("/profiles/upload")
-def profiles_upload(file: UploadFile = File(None), text: str = Form("")):
+def profiles_upload(file: UploadFile = File(None), text: str = Form(""), note: str = Form("")):
     """Import a new profile version: upload the JSON file or paste it.
     Same validation as `cli.py import-profile`."""
     try:
@@ -793,7 +882,7 @@ def profiles_upload(file: UploadFile = File(None), text: str = Form("")):
         if missing:
             raise ValueError(f"profile missing required keys: {sorted(missing)} "
                              "(see docs/interview_spec.md)")
-        version = db.import_profile(profile)
+        version = db.import_profile(profile, note)
         msg = (f"Imported {profile['applicant_id']} as version {version}. "
                "Unreviewed jobs still carry old-profile scores — use Rescore "
                "on the Review page to re-queue them.")

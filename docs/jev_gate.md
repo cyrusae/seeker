@@ -172,6 +172,24 @@ plus a ~300-job sample of auto-skipped jobs and the 466-job backlog.
   `pick_spot_checks()` runs after each full cycle.
 - `app/report.py`: the tuning report, including the per-criterion firing
   table from cached answers.
+- `app/gatelab.py` (**Gate lab** tab, visible while "Jev shadow scores" is
+  on): troubleshooting views built only from stored answers and the model's
+  numbers, never generated text.
+  - **Job inspector** (`/gate/job/<id>`, the "why?" link on cards): plain-words
+    reasons, the score arithmetic term by term, every question's answer, and
+    what changed across profile versions for that job.
+  - **"Find evidence"**: one Jev call (~$0.0001–0.0003) asks which line of the
+    posting is behind an answer. Cached in `gate_evidence` by posting text +
+    question wording, so repeats and unrelated profile edits are free.
+  - **Criteria** (`/gate/criteria`): how often each criterion fires on kept /
+    rejected / other jobs at an adjustable threshold, ⚑ flags, and a
+    drill-down to every job an item fired on.
+  - **Profile changes** (`/gate/changes`): what a profile version changed
+    (criteria diff, per-item firing before/after, jobs whose outcome changed,
+    cross-validated AUC before/after, re-ask cost), scored with the same gate
+    model on both sides. A report is saved automatically when a refit is
+    applied, or on demand. Profile imports accept an optional note ("what
+    this version is trying to fix"), which is shown on the report.
 - UI: Profiles → Gate box, `/gate` (preview / apply / discard / history),
   "Jev NN" on review cards (hover shows reasons), the 🎲 spot-check note, the
   ⏰ deadline-passed badge, and the "refit" badge on the nav.
@@ -184,6 +202,8 @@ plus a ~300-job sample of auto-skipped jobs and the 466-job backlog.
 | After importing a profile | Same, with "first ask Jev" ticked (~$0.40) |
 | Jev changes version (warning on the Gate page) | `cli.py gate-backtest` first, then refit |
 | You edit `.env` | Restart the server (or touch a `.py` file under `--reload`); settings are read once at startup. Docker: `docker compose up -d`, not `restart` |
+| A job's Jev score looks wrong | Turn on "Jev shadow scores", click **why?** on the card, and use **find evidence** on the answer that fired |
+| You changed a profile and want to know what it did | Gate lab → Profile changes (pick the two versions); save the report |
 | You want a fresh look at gate vs DeepSeek | `cli.py gate-backtest` (cached answers are free; only new jobs cost) |
 
 CLI: `gate-backtest [--skipped N] [--no-backlog] [--limit N]`,

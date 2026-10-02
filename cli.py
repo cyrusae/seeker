@@ -14,7 +14,7 @@ import sys
 from app import db, pipeline, report
 
 
-def cmd_import(path: str):
+def cmd_import(path: str, note: str | None = None):
     with open(path) as f:
         profile = json.load(f)
     missing = report.REQUIRED_PROFILE_KEYS - profile.keys()
@@ -22,7 +22,7 @@ def cmd_import(path: str):
         sys.exit(f"Profile missing required keys: {sorted(missing)} "
                  f"(see docs/interview_spec.md for the schema)")
     db.init_db()
-    version = db.import_profile(profile)
+    version = db.import_profile(profile, note)
     print(f"Imported {profile['applicant_id']} as version {version}.")
 
 
@@ -88,6 +88,7 @@ def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("import-profile"); sp.add_argument("path")
+    sp.add_argument("--note", help="what this version is trying to fix (shown in gate change reports)")
     sub.add_parser("run")
     sp = sub.add_parser("tuning-report"); sp.add_argument("applicant_id")
     sp = sub.add_parser("gate-backtest")
@@ -102,7 +103,7 @@ def main():
                     help="call Jev for decisions with no cached answers (~$0.00025 each)")
     args = p.parse_args()
     if args.cmd == "import-profile":
-        cmd_import(args.path)
+        cmd_import(args.path, args.note)
     elif args.cmd == "run":
         cmd_run()
     elif args.cmd == "tuning-report":
