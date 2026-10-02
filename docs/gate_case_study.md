@@ -255,7 +255,7 @@ only 26 kept jobs. That's the open problem.
 
 **Total Jev spend for the whole project** (every backtest, refit and re-ask):
 **$1.37** over 4,809 calls through round 3; **$1.72** over 5,784 calls after
-round 4.
+round 4; about **$2.08** after round 5.
 
 **Round 4: a one-line profile fix, measured (profile v13).** With shadow
 scores visible per job, two shortlisted jobs showed a score of exactly 2,
@@ -303,6 +303,32 @@ past decisions).
   figure is partly in-sample). With only 19 new decisions since the last
   fit, the existing model was kept. **The improvement came from better
   answers, not new weights.**
+
+**Round 5: a severity change, and threshold drift (profile v14).** The
+lab's criteria view showed the "requires specialized domain expertise" item
+vetoing jobs the applicant would stretch for. It fired on 2 kept jobs vs 121
+rejects: a strong signal, but a poor veto. v14 made it a penalty.
+
+| Cyrus | v13 | v14 |
+|---|---|---|
+| Kept jobs vetoed | 6 | **4** |
+| AUC (5-fold CV) | 0.889 | **0.896** |
+| Re-ask cost | | $0.35 |
+
+- **Side effect:** the penalty feature is P(any penalty item applies), so
+  adding a frequently-moderate item lowered many scores slightly. Under the
+  old thresholds, 29 jobs (including some applied/shortlisted) slipped from
+  gloss to review. A refit (model v10: gloss 38.5, review 23.3) restored
+  them. **Lesson:** changing the penalty or preference mix makes old
+  thresholds stale, and comparing the current model's partly in-sample AUC
+  with a cross-validated candidate's is biased toward the current model.
+- **Severity removed from Jev's state.** Severity is policy, not evidence, so
+  flipping it shouldn't need a re-ask. This was the last severity-only change
+  that cost one.
+- **The gate caught the applicant's own mistakes:** misread locations on
+  shortlisted jobs, and a "6+ years" requirement behind an "all levels" title.
+  A "Doesn't actually fit" withdrawal now records these as rejects, so
+  refits learn the corrected labels.
 
 ## 7. What changed besides the score
 

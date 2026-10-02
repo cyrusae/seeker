@@ -22,8 +22,8 @@ explaining the project to someone else), see
 | Jev gate module, backtest, `gate-fit`, Gate page | **Done** |
 | `GATE_MODE=shadow`: new jobs get a Jev score next to DeepSeek's | **On** (DeepSeek still decides) |
 | Spot checks (3 random skipped jobs/applicant/cycle) | **On** |
-| Cyrus profile | **v13** (2026-10-01): v12's full review plus a one-line fix to the citizenship dealbreaker and a new `work_authorization` field. See case study, round 4 |
-| Gate model in use | **v3** (fit after Cyrus's v12): gloss ≥ 39.2, review ≥ 29.3, penalty weight −0.58. With v13 answers: AUC 0.867 overall (CV), 14 of 180 kept jobs vetoed (6 of Cyrus's 154; the rest Martin's). A refit on v13 answers (v8) didn't beat it and was discarded |
+| Cyrus profile | **v14** (2026-10-02): v13 + the domain-expertise item changed from dealbreaker to penalty. Reports for v12→v13 and v13→v14 are saved in Gate lab → Profile changes |
+| Gate model in use | **v10** (fit on v14 answers, 1,262 decisions): gloss ≥ 38.5, review ≥ 23.3; penalty weight −0.57; 12 of 181 kept jobs vetoed (4 of Cyrus's) |
 | Shadow scores | Current for all jobs with answers under the current profiles (~1,630 jobs). Status → Backfill refreshes after any profile change |
 | Martin profile full review | **Next, and blocking**: still on v9. His shadow scores are unreliable (AUC 0.59 vs DeepSeek 0.77; 8 of his 64 review-queue jobs vetoed, 5 by the travel item). **Don't evaluate the gate on his jobs until after his review, and don't finalize pipeline changes without checking their effect on him.** |
 | Live mode (gate decides status, gloss step, gloss-on-open) | **Not built** |
@@ -129,6 +129,12 @@ plus a ~300-job sample of auto-skipped jobs and the 466-job backlog.
   A dealbreaker answered at p ≥ 0.8 (or a clear scam rating) vetoes the job.
   Profile items can be marked `"severity": "penalty"`, and penalties feed
   the fit instead.
+- **After a profile change, refit even if the preview says the current model
+  scores marginally higher.** The current model's AUC is partly measured on
+  decisions it was trained on (flattered); the candidate's is cross-validated.
+  And changing which items are penalties or preferences shifts every score,
+  so the old thresholds go stale (v13→v14 pushed 29 jobs from gloss to review
+  until the refit).
 - **Weights are learned, but refits are manual** with a preview. Nightly
   automatic refits would let the ranking drift unseen. Thresholds are picked
   from kept jobs that weren't vetoed (otherwise one misfiring dealbreaker drags
