@@ -8,6 +8,10 @@ above a (lower) threshold.**
 Started 2026-10-01. This file is the running record; update the Status and
 Next steps sections when something moves.
 
+For the full reasoning, the math, and every number in one narrative (e.g. for
+explaining the project to someone else), see
+[`gate_case_study.md`](gate_case_study.md).
+
 ---
 
 ## Status (as of 2026-10-01)
