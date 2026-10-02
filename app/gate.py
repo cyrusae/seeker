@@ -64,6 +64,24 @@ def init_db():
 
 # --- request construction ----------------------------------------------------
 
+def _criteria_for_state(criteria: dict) -> dict:
+    """The criteria block as Jev sees it, without `severity`. Severity is
+    policy (does a hit veto, or just count against?), not evidence, and the
+    question asked is the same either way; keeping it out of the state means
+    flipping an item between dealbreaker and penalty doesn't invalidate the
+    cached answers. (Preference weights are policy too and could be stripped
+    the same way; left in for now because removing them would invalidate
+    every applicant's cache at once.)"""
+    def plain(lst):
+        return [x.get("text", "") if isinstance(x, dict) else x for x in lst or []]
+    out = dict(criteria)
+    if "anti_criteria" in out:
+        out["anti_criteria"] = plain(out["anti_criteria"])
+    if isinstance(out.get("hard_filters"), dict) and "other" in out["hard_filters"]:
+        out["hard_filters"] = {**out["hard_filters"], "other": plain(out["hard_filters"]["other"])}
+    return out
+
+
 def build_state(profile: dict, job) -> dict:
     p = profile.get("profile") or {}
     desc = job["description"] or ""
@@ -71,7 +89,7 @@ def build_state(profile: dict, job) -> dict:
         desc = desc[:MAX_DESC_CHARS] + "\n[...truncated]"
     return {
         "applicant": {k: p[k] for k in APPLICANT_KEYS if k in p},
-        "criteria": profile.get("criteria") or {},
+        "criteria": _criteria_for_state(profile.get("criteria") or {}),
         "job": {
             "title": job["title"], "company": job["company"],
             "location": job["location"], "salary": job["salary"],
