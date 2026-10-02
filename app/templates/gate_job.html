@@ -7,6 +7,14 @@
   · {{ j['location'] or '?' }}{% if j['url'] %} · <a href="{{ j['url'] }}" target="_blank">posting ↗</a>{% endif %}
   · gate model {{ 'v%d' % model.version if model.version else 'default' }} · profile v{{ profile_version }}</p>
 {% if msg %}<p class="msg">{{ msg }}</p>{% endif %}
+{% if j['status'] in ('shortlisted', 'archived') %}
+<form method="post" action="/jobs/{{ j['id'] }}/misfit" class="actions" style="align-items: center;"
+      onsubmit="return confirm('Record this as a job that doesn\'t actually fit? It moves out of Applications and counts as a reject for tuning and gate refits.')">
+  <input type="hidden" name="redirect" value="/gate/job/{{ j['id'] }}">
+  <input type="text" name="note" placeholder="optional: what you misread (e.g. location is Tacoma)" style="flex: 1;">
+  <button class="subtle">✗ Doesn't actually fit</button>
+</form>
+{% endif %}
 
 {% if not x %}
 <div class="card">

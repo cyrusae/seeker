@@ -315,6 +315,23 @@ def archive(job_id: str, feedback: str = Form(""), redirect: str = Form("/applic
     return RedirectResponse(redirect, status_code=303)
 
 
+MISFIT_NOTE = "doesn't actually fit (withdrawn after shortlisting)"
+
+
+@app.post("/jobs/{job_id}/misfit")
+def misfit(job_id: str, note: str = Form(""), redirect: str = Form("/applications")):
+    """Withdraw a shortlisted (or relabel an archived) job as "it doesn't
+    actually fit": e.g. a misread location or seniority. Unlike Archive
+    ("changed my mind"), this is recorded as a reject, so profile tuning and
+    gate refits learn the job wasn't a match after all."""
+    fb = MISFIT_NOTE + (f": {note.strip()}" if note.strip() else "")
+    with db.connect() as conn:
+        conn.execute("UPDATE jobs SET status='rejected', feedback=?, reviewed_at=? "
+                     "WHERE id=? AND status IN ('shortlisted','archived')",
+                     (fb, db.now(), job_id))
+    return RedirectResponse(redirect, status_code=303)
+
+
 @app.post("/jobs/{job_id}/eval")
 def eval_now(job_id: str, background: BackgroundTasks):
     background.add_task(pipeline.evaluate_job, job_id)

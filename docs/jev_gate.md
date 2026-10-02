@@ -137,6 +137,13 @@ plus a ~300-job sample of auto-skipped jobs and the 466-job backlog.
 - **Spot checks** fight label bias. Once the gate picks what you see, your
   decisions only cover jobs it liked; random below-the-floor jobs keep some
   labels independent of the gate.
+- **Withdrawing from the shortlist has two meanings.** **Archive** = "changed
+  my mind": the gate counts it as kept (it was worth a look), while the tuning
+  report counts it as a miss (the profile didn't predict the final call).
+  Tested: counting archives as kept, excluded, or rejected gives AUC 0.926 /
+  0.921 / 0.917 on the same test, so this choice doesn't matter much. **✗ Doesn't
+  actually fit** (Applications, or the Gate lab job page) = "I misread it":
+  recorded as a reject for both. Use it when the gate catches your mistake.
 - **"Kept" means applied, shortlisted or archived.** Archived means
   shortlisted then withdrawn, so it still counts as "worth a look". This adds
   some noise (e.g. a Cisco ML job you dropped over its experience ask).

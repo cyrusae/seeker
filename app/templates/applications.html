@@ -88,6 +88,14 @@ tailor materials → <strong>Applied ✓</strong>.</p>
       <button class="reject" title="changed my mind — moves to the archived tab; counts as negative signal for profile tuning">Archive</button>
     </form>
     {% endif %}
+    {% if tab in ('shortlist', 'archived') %}
+    <form method="post" action="/jobs/{{ j['id'] }}/misfit"
+          onsubmit="this.note.value = (document.getElementById('dnote-{{ j['id'] }}') || {value: ''}).value; return confirm('Record this as a job that doesn\'t actually fit (e.g. you misread the location or seniority)? It moves out of Applications and counts as a reject for profile tuning and gate refits.')">
+      <input type="hidden" name="note" value="">
+      <input type="hidden" name="redirect" value="{{ back }}">
+      <button class="subtle" title="it never fit: misread location, seniority, requirements. Recorded as a reject, so tuning and the gate learn from it">✗ Doesn't actually fit</button>
+    </form>
+    {% endif %}
   </div>
 </div>
 {% else %}
