@@ -18,20 +18,21 @@ Next steps sections when something moves.
 | Jev gate module, backtest, `gate-fit`, Gate page | **Done** |
 | `GATE_MODE=shadow`: new jobs get a Jev score next to DeepSeek's | **On** (DeepSeek still decides) |
 | Spot checks (3 random skipped jobs/applicant/cycle) | **On** |
-| Gate model in use | **Built-in default (v0).** Candidate v2 is sitting unapplied on the Gate page; it was fit before the profile review, so don't apply it. |
-| Profile full reviews (Cyrus, Martin) | **Next: in progress on your side** |
+| Cyrus profile full review | **Done**: v12 imported 2026-10-01 |
+| Gate model in use | **v3** (applied 2026-10-01, fit after Cyrus's v12): AUC 0.856 on 1,244 decisions; gloss ≥ 39.2, review ≥ 29.3; penalty weight learned (−0.58); 18 of 174 kept jobs still vetoed. A later preview, v6, ranks marginally worse (0.857 vs 0.860) and isn't applied |
+| Martin profile full review | **Next** (still on v9; do it with Martin) |
 | Live mode (gate decides status, gloss step, gloss-on-open) | **Not built** |
 
 ## Next steps
 
-1. **Profile full reviews.** Profiles → download tuning report → chat session
-   with `docs/interview_spec.md` in **Full review** mode. Bring the
-   per-criterion table; see "Evidence" below for what it already shows.
-   Martin's review should be done with Martin.
-2. **Import, then refit.** Import the new profiles, then Profiles → Gate →
-   Preview refit with "first ask Jev" ticked (~$0.40; past decisions get
-   answers under the new wording). Check "Dealbreakers that fire on jobs you
-   kept" (should be near zero now) and the AUC. Apply.
+1. **Martin's full review** (Cyrus's is done). Profiles → download his
+   tuning report → chat session with `docs/interview_spec.md` in **Full
+   review** mode, with Martin. Start with his travel dealbreaker (no signal;
+   see Evidence).
+2. **Import, then refit.** Profiles → Gate → Preview refit with "first ask
+   Jev" ticked (past decisions get answers under the new wording). Check
+   "Dealbreakers that fire on jobs you kept" and that the AUC isn't worse than
+   v3's. Apply. Also look at which of the 18 vetoed kept jobs remain, and why.
 3. **Shadow period.** Review normally for 2–3 weeks or ~100+ decisions,
    including the 🎲 spot checks. Refit when the nav shows the "refit" badge.
 4. **Go/no-go for live mode.** Re-run `cli.py gate-backtest` and check:
@@ -44,7 +45,8 @@ Next steps sections when something moves.
 
 ## Evidence so far
 
-From two backtests over ~1,165 past decisions (151 kept, ~1,015 rejected),
+Figures in this section come from the profiles as they were before the
+reviews (Cyrus v10, Martin v9). From two backtests over ~1,165 past decisions (151 kept, ~1,015 rejected),
 plus a ~300-job sample of auto-skipped jobs and the 466-job backlog.
 
 - **Cost:** Jev costs ~$0.00025/job vs DeepSeek's ~$0.0008. The state (the
