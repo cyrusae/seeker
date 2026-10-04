@@ -117,8 +117,10 @@
   <p class="pitch"><strong>Why:</strong> {{ j['pitch'] }}</p>
   <p class="concerns"><strong>Concerns:</strong> {{ j['concerns'] }}</p>
   {% if j['description'] %}
-  <details class="posting"><summary>full posting text</summary>
-    <div class="desc" id="rdesc-{{ j['id'] }}">{{ j['description'] }}</div>
+  {# Posting text is fetched when opened, not embedded: with ~100+ cards it
+     made the page 600 KB+, slow on a phone over the LAN. #}
+  <details class="posting" ontoggle="loadDesc(this, '{{ j['id'] }}')"><summary>full posting text</summary>
+    <div class="desc" id="rdesc-{{ j['id'] }}" data-loaded="0"><span class="meta">loading…</span></div>
   </details>
   {% endif %}
   <input type="text" name="note" id="note-{{ j['id'] }}"
@@ -189,10 +191,31 @@
 </form>
 {% endif %}
 <script>
+function fetchDesc(el) {
+  if (el.dataset.loaded === '1') return Promise.resolve();
+  const id = el.id.replace('rdesc-', '');
+  return fetch('/jobs/' + id + '/description').then(r => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.text();
+  }).then(t => { el.textContent = t; el.dataset.loaded = '1'; })
+    .catch(() => { el.innerHTML = '<span class="meta">couldn\'t load the posting text; try again</span>'; });
+}
+function loadDesc(details, id) {
+  if (details.open) fetchDesc(document.getElementById('rdesc-' + id));
+}
 function copyListing(btn, descId) {
+  const el = document.getElementById(descId);
+  if (el.dataset.loaded !== '1') {
+    // Over plain http (the LAN), copying only works synchronously inside a
+    // tap, so load first and ask for a second tap rather than copy after await.
+    btn.textContent = 'Loading…';
+    fetchDesc(el).then(() => {
+      btn.textContent = el.dataset.loaded === '1' ? 'Tap again to copy' : 'Copy listing';
+    });
+    return;
+  }
   const title = btn.closest('.card').querySelector('h3').textContent.trim();
-  const body = document.getElementById(descId).textContent.trim();
-  copyText(title + '\n\n' + body).then(() => {
+  copyText(title + '\n\n' + el.textContent.trim()).then(() => {
     btn.textContent = 'Copied ✓';
     setTimeout(() => { btn.textContent = 'Copy listing'; }, 1500);
   }).catch(() => { btn.textContent = 'Copy failed'; });

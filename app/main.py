@@ -211,6 +211,10 @@ def _startup_tasks():
 
 
 app = FastAPI(title="seeker v2", lifespan=lifespan)
+# Pages are repetitive HTML (one card per job), so compression cuts them
+# ~5-10x on the wire — noticeable on a phone over the LAN.
+from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 def _applicants(conn):
@@ -330,6 +334,16 @@ def misfit(job_id: str, note: str = Form(""), redirect: str = Form("/application
                      "WHERE id=? AND status IN ('shortlisted','archived')",
                      (fb, db.now(), job_id))
     return RedirectResponse(redirect, status_code=303)
+
+
+@app.get("/jobs/{job_id}/description")
+def job_description(job_id: str):
+    """Posting text for one job, loaded on demand by the Review page."""
+    with db.connect() as conn:
+        r = conn.execute("SELECT description FROM jobs WHERE id=?", (job_id,)).fetchone()
+    if r is None:
+        return PlainTextResponse("unknown job", status_code=404)
+    return PlainTextResponse(r["description"] or "")
 
 
 @app.post("/jobs/{job_id}/eval")
