@@ -25,7 +25,7 @@ explaining the project to someone else), see
 | Cyrus profile | **v14** (2026-10-02): v13 + the domain-expertise item changed from dealbreaker to penalty. Reports for v12→v13 and v13→v14 are saved in Gate lab → Profile changes |
 | Gate model in use | **v10** (fit on v14 answers, 1,262 decisions): gloss ≥ 38.5, review ≥ 23.3; penalty weight −0.57; 12 of 181 kept jobs vetoed (4 of Cyrus's) |
 | Shadow scores | Current for all jobs with answers under the current profiles (~1,630 jobs). Status → Backfill refreshes after any profile change |
-| Martin profile full review | **Next, and blocking**: still on v9. His shadow scores are unreliable (AUC 0.59 vs DeepSeek 0.77; 8 of his 64 review-queue jobs vetoed, 5 by the travel item). **Don't evaluate the gate on his jobs until after his review, and don't finalize pipeline changes without checking their effect on him.** |
+| Martin profile | **v11** (2026-10-05). v10 was his full review; v11 fixed four v10 exclusions filed under `hard_filters.other`, which inverted them (per diem applied to 82% of jobs → 0%). His decided jobs don't have answers under v11 yet, so **refit with "first ask Jev" ticked** before judging the gate on his numbers |
 | Live mode (gate decides status, gloss step, gloss-on-open) | **Not built** |
 
 ## Next steps
@@ -224,6 +224,20 @@ CLI: `gate-backtest [--skipped N] [--no-backlog] [--limit N]`,
 
 ## Gotchas
 
+- **The live server runs from this working folder with `--reload`.** Saving
+  a `.py` file (including on an unmerged branch) reloads the server you and
+  Martin are using. On 2026-10-05 an edit triggered a reload whose shutdown
+  got stuck, and the server stopped answering until the old worker was
+  killed (`kill -9 <worker pid>`; the reloader then starts a fresh one).
+  Safer setups: start the server with `--timeout-graceful-shutdown 10`, so a
+  stuck shutdown can't hang it, and/or run it from a separate checkout of
+  `main` (see "Separate live checkout" below).
+- **The two exclusion lists read in opposite directions.**
+  `hard_filters.other` = requirements ("No Sunday work"); `anti_criteria` =
+  jobs to rule out ("Position is per diem"). A describe-the-job item in the
+  wrong list is inverted. The Gate lab flags exclusions that apply to most
+  jobs (⚠).
+
 - **Any profile edit invalidates the cached answers** for that applicant
   (even a summary tweak), because the whole profile is in the request.
   The cost is a re-ask, never wrong answers. `base_resume_md` and `contact`
@@ -240,6 +254,21 @@ CLI: `gate-backtest [--skipped N] [--no-backlog] [--limit N]`,
   DeepSeek showed you (score ≥ 50). Spot checks gradually fix this.
 - `data/seeker.db.pre-gate-backup` is a DB copy from before the first gate
   run. Delete it once you're comfortable.
+
+## Separate live checkout (proposed, not done)
+
+Keep editing and testing in this folder, and run the server from a second
+checkout that only ever has merged `main`:
+
+```sh
+cd ~/GitHere/seeker && git -C prototype worktree add ../live-checkout live
+# start the server from ../live-checkout/prototype with DATA_DIR pointing at
+# this folder's data/ (absolute path) and --timeout-graceful-shutdown 10
+# deploy: git -C ~/GitHere/seeker/live-checkout merge --ff-only main
+```
+
+The same split (dev here, live elsewhere, `git pull` to deploy) is how the
+homelab move should work.
 
 ## Live mode design (not built yet)
 
