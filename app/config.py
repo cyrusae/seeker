@@ -73,6 +73,10 @@ class Settings:
     # Random below-the-floor jobs surfaced per applicant per cycle, so your
     # decisions don't only ever cover jobs the scorer already liked.
     spot_checks_per_run: int = int(_env("SPOT_CHECKS_PER_RUN", "3"))
+    # Jobs scored at once in a batch eval. Each one is mostly waiting on the
+    # model (DeepSeek ~7-14 s/call), so a few in parallel cut a run several-fold.
+    # 1 = the old one-at-a-time behaviour.
+    eval_workers: int = max(1, int(_env("EVAL_WORKERS", "4")))
     # Re-score guard: at most this many jobs per click (most recently listed
     # first), and the estimate shown before confirming uses this $/job
     # (DeepSeek eval + escalation share + Jev shadow, Oct 2026 averages).

@@ -179,52 +179,75 @@ def ingest_all() -> tuple[int, int]:
                 "SELECT dedupe_key FROM jobs WHERE applicant_id=?", (applicant_id,)))
             corpus = dedupe.load_corpus(conn, applicant_id)
         scan = fetch_for_profile(profile, seen)  # network I/O, no db lock held
-        with db.connect() as conn:
-            for job in scan:
-                if _STOP.is_set():
-                    break
-                # safety net for adapters that don't clean (plain-text APIs
-                # still carry entities); idempotent for the ones that do
-                job = {**job, "description": textclean.clean(job.get("description"))}
-                kw = _excluded_kw(job.get("title"), profile, job.get("company"))
-                if kw:
-                    # Keep the row (dedupe key stops nightly re-adds; visible
-                    # and re-evaluable on the Jobs page) but never eval it.
-                    job = {**job, "status": "filtered", "error": kw}
-                else:
-                    match = dedupe.find_match(job, corpus)
-                    if match:
-                        kind, existing = match
-                        if kind == "exact":
-                            # Same listing from another source: park it (the
-                            # kept dedupe key stops nightly re-fetches) and
-                            # upgrade the original if this copy is more direct.
-                            dedupe.prefer_direct(conn, existing, job)
-                            dedupe.merge_location(conn, existing["id"], job.get("location"))
-                            job = {**job, "status": "filtered",
-                                   "error": f"duplicate of {existing['id']} "
-                                            f"({existing['title']})"[:300]}
-                        else:
-                            job = {**job, "similar_to": existing["id"]}
-                jid = db.insert_job(conn, applicant_id=applicant_id,
-                                    source="poll", **job)
-                if jid:
-                    if job.get("status") != "filtered":
-                        added += 1
-                        # New legit jobs join the corpus so intra-run dupes
-                        # (same posting from two sources in one cycle) match.
-                        if not job.get("similar_to"):
-                            corpus.append({"id": jid, "title": job.get("title"),
-                                           "company": job.get("company"),
-                                           "location": job.get("location"),
-                                           "description": job.get("description"),
-                                           "url": job.get("url"), "source": "poll"})
+        relisted = {j["dedupe_key"] for j in scan if j["dedupe_key"] in seen}
+
+        # Plan every insert before opening a write. Fuzzy duplicate matching
+        # costs 30-60 ms per job against the full history; done inside the
+        # write it held the lock for about a minute per applicant, and any
+        # click that wrote (reject, archive) timed out with "database is
+        # locked". Jobs we already store (same dedupe key) are skipped: API
+        # and board sources list hundreds of them every night, and matching
+        # them only ever found themselves.
+        # In scan order, so a duplicate of a job new in this same run is
+        # merged after that job is inserted: ("insert", job) or
+        # ("merge", existing_row, job). Insert ids are pre-assigned.
+        planned: list[tuple] = []
+        keys = set(seen)
+        for job in scan:
+            if _STOP.is_set():
+                break
+            if job["dedupe_key"] in keys:
+                continue  # stored already, or listed twice in this scan
+            keys.add(job["dedupe_key"])
+            # safety net for adapters that don't clean (plain-text APIs
+            # still carry entities); idempotent for the ones that do
+            job = {**job, "description": textclean.clean(job.get("description")),
+                   "id": db.new_id()}
+            kw = _excluded_kw(job.get("title"), profile, job.get("company"))
+            if kw:
+                # Keep the row (dedupe key stops nightly re-adds; visible
+                # and re-evaluable on the Jobs page) but never eval it.
+                job = {**job, "status": "filtered", "error": kw}
+            else:
+                match = dedupe.find_match(job, corpus)
+                if match:
+                    kind, existing = match
+                    if kind == "exact":
+                        # Same listing from another source: park it (the
+                        # kept dedupe key stops nightly re-fetches) and
+                        # upgrade the original if this copy is more direct.
+                        planned.append(("merge", existing, job))
+                        job = {**job, "status": "filtered",
+                               "error": f"duplicate of {existing['id']} "
+                                        f"({existing['title']})"[:300]}
+                    else:
+                        job = {**job, "similar_to": existing["id"]}
+                elif job.get("status") != "filtered":
+                    # New legit jobs join the corpus so intra-run dupes
+                    # (same posting from two sources in one cycle) match.
+                    corpus.append({"id": job["id"], "title": job.get("title"),
+                                   "company": job.get("company"),
+                                   "location": job.get("location"),
+                                   "description": job.get("description"),
+                                   "url": job.get("url"), "source": "poll"})
+            planned.append(("insert", job))
+
+        with db.connect() as conn:  # short write: no network, no fuzzy matching
+            for op in planned:
+                if op[0] == "merge":
+                    _, existing, job = op
+                    dedupe.prefer_direct(conn, existing, job)
+                    dedupe.merge_location(conn, existing["id"], job.get("location"))
+                    continue
+                job = op[1]
+                jid = db.insert_job(conn, applicant_id=applicant_id, source="poll", **job)
+                if jid and job.get("status") != "filtered":
+                    added += 1
             # Jobs we already had that a source listed again this cycle are
             # still being advertised — refresh their last-seen stamp. (Scraper
             # adapters skip known keys before yielding, so for those the
             # liveness probe is what refreshes it.)
-            db.touch_seen(conn, applicant_id,
-                          {j["dedupe_key"] for j in scan if j["dedupe_key"] in seen})
+            db.touch_seen(conn, applicant_id, relisted)
             closed += _sweep_closed(conn, applicant_id, scan)
     return added, closed
 
@@ -485,13 +508,28 @@ def evaluate_pending() -> int:
         with db.connect() as conn:
             ids = [r["id"] for r in conn.execute("SELECT id FROM jobs WHERE status='pending_eval'")]
         RUN_STATUS.update(eval_total=len(ids), eval_done=0)
+        # A few jobs at a time: each eval is almost all waiting on the model,
+        # and its database writes are single short UPDATEs. Workers check the
+        # stop flag before starting a job, so Stop still takes effect within
+        # one eval's time. The budget check can overshoot by at most
+        # eval_workers calls.
+        from concurrent.futures import ThreadPoolExecutor
+        count_lock = threading.Lock()
         done = 0
-        for jid in ids:
+
+        def one(jid):
+            nonlocal done
             if _STOP.is_set():
-                break
-            evaluate_job(jid)
-            done += 1
-            RUN_STATUS["eval_done"] = done
+                return
+            try:
+                evaluate_job(jid)
+            finally:
+                with count_lock:
+                    done += 1
+                    RUN_STATUS["eval_done"] = done
+        with ThreadPoolExecutor(max_workers=settings.eval_workers,
+                                thread_name_prefix="eval") as pool:
+            list(pool.map(one, ids))
         if standalone:
             RUN_STATUS.update(running=False, evaluated=done, finished_at=db.now(),
                                phase="stopped" if _STOP.is_set() else "done")

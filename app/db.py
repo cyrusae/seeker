@@ -199,8 +199,9 @@ def all_applicants(conn) -> list[dict]:
 # --- jobs -------------------------------------------------------------------
 
 def insert_job(conn, **f) -> str | None:
-    """Insert a job; returns id, or None if it's a duplicate for that applicant."""
-    jid = new_id()
+    """Insert a job; returns id, or None if it's a duplicate for that applicant.
+    Pass `id` to pre-assign one (ingest plans its inserts before writing)."""
+    jid = f.get("id") or new_id()
     try:
         conn.execute(
             """INSERT INTO jobs (id, applicant_id, source, dedupe_key, url, title,
