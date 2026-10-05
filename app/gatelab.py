@@ -409,6 +409,7 @@ def criteria_view(applicant_id: str, threshold: float = 0.8, item: str | None = 
             [(q, meta[q]) for q in ("thin", "deadline_passed") if q in meta]
     groups = {"kept": 0, "rejected": 0, "other": 0}
     counts = defaultdict(lambda: {"kept": 0, "rejected": 0, "other": 0})
+    applies = defaultdict(int)  # p >= 0.5 across all jobs, for the "fires on most jobs" check
     fired_jobs = []
     for jid, s in sets.items():
         j = jobs.get(jid)
@@ -423,6 +424,7 @@ def criteria_view(applicant_id: str, threshold: float = 0.8, item: str | None = 
                 continue
             p = _p(a)
             counts[q][g] += p >= threshold
+            applies[q] += p >= 0.5
             if item == q and p >= max(0.0, threshold - 0.3):
                 fired_jobs.append({"job": j, "p": p, "fired": p >= threshold, "group": g})
     rows = []
@@ -432,9 +434,12 @@ def criteria_view(applicant_id: str, threshold: float = 0.8, item: str | None = 
         kr = c["kept"] / max(groups["kept"], 1)
         rr = c["rejected"] / max(groups["rejected"], 1)
         flag = (sev == "dealbreaker" and c["kept"] >= 2 and (kr >= 0.05 or kr >= rr))
+        share = applies[q] / max(len(sets), 1)
+        broad = (gate.broad_candidate(m) and len(sets) >= gate.BROAD_MIN_JOBS
+                 and share > gate.BROAD_SHARE)
         rows.append({"qid": q, "kind": m["kind"], "label": m["label"], "severity": sev,
                      "weight": m.get("weight"), **c, "kept_rate": kr, "rejected_rate": rr,
-                     "flag": flag})
+                     "flag": flag, "broad": broad, "applies_share": share})
     order = {"hard": 0, "anti": 1, "soft": 2, "flag": 3}
     rows.sort(key=lambda r: (order[r["kind"]], -r["kept_rate"]))
     fired_jobs.sort(key=lambda x: -x["p"])

@@ -48,6 +48,14 @@
     <tr><td>rejects below</td>{% for r in st.table %}<td>{{ r.culled }}%</td>{% endfor %}</tr>
   </table>
 
+  {% if st.broad_flags %}
+  <h4 style="color: var(--bad);">Exclusions that apply to most jobs</h4>
+  <p class="meta">A hard filter or anti-criterion that applies to over half of all jobs is almost always
+    inverted: <code>hard_filters.other</code> items must be worded as requirements (“No Sunday work”), while
+    <code>anti_criteria</code> items describe jobs to rule out (“Position is per diem”). Fix the profile before applying.</p>
+  <ul>{% for b in st.broad_flags %}<li><strong>{{ b.applicant }}</strong> ({{ 'hard filter' if b.kind == 'hard' else 'anti-criterion' }}):
+    applies to {{ b.share }}% — {{ b.item }}</li>{% endfor %}</ul>
+  {% endif %}
   {% if st.dealbreaker_flags %}
   <h4>Dealbreakers that fire on jobs you kept</h4>
   <p class="meta">These veto jobs outright, yet you kept some anyway. Either the wording

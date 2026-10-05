@@ -75,6 +75,9 @@ def cmd_gate_fit(args):
         print(f"  ⚑ {f['applicant']}: dealbreaker fired on {f['kept']} kept jobs "
               f"({f['kept_pct']}%) vs {f['rejected']} rejected ({f['rejected_pct']}%) "
               f"— {f['item'][:90]}")
+    for b in st.get("broad_flags", []):
+        print(f"  ⚠ {b['applicant']}: {b['kind']} item applies to {b['share']}% of decided jobs "
+              f"(inverted or misfiled?) — {b['item'][:90]}")
     for w in st["warnings"]:
         print("  ! " + w)
     if args.apply:

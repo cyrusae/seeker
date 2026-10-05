@@ -93,6 +93,25 @@ as Full review. Ask before each change. Leave everything else untouched.
 
 ### Writing criteria (all modes)
 
+**The two lists read in opposite directions. Getting this wrong inverts the
+item.**
+
+- `hard_filters.other` holds **requirements the job must meet**, worded as
+  requirements: "No Sunday work required", "No early morning start times".
+  The gate asks *"Does the job conflict with this requirement?"*
+- `anti_criteria` holds **descriptions of jobs to rule out**: "Position is
+  per diem", "Employer is a staffing agency". The gate asks *"Does the job
+  fall into this ruled-out category?"*
+
+"Position is per diem" filed under `hard_filters.other` becomes "the job
+conflicts with a requirement to be per diem", so it fires on every job that
+*isn't* per diem. **For any new exclusion, use `anti_criteria`** (it takes
+the same `"severity"` field), and keep `hard_filters` for location and salary
+floor. Existing requirement-style items in `hard_filters.other` still work;
+don't add describe-the-bad-job items there. The Gate lab flags an exclusion
+that applies to most jobs (⚠), which is the tell-tale sign of an inverted
+item.
+
 An automated gate turns **each** `hard_filters` entry, `anti_criteria` item and
 `soft_preferences` item into its own yes/no question about a job posting
 ("Does this job fall into: <item>?"). It reads the item literally and sees
@@ -139,7 +158,7 @@ nothing else from the conversation. So:
     "hard_filters": {
       "location": "e.g. Remote (US) or Seattle metro",
       "salary_floor": "number or null",
-      "other": ["any absolute dealbreakers"]
+      "other": ["REQUIREMENTS the job must meet, worded as requirements: 'No Sunday work'. Prefer anti_criteria for new exclusions; see below"]
     },
     "anti_criteria": [
       "title patterns or role shapes to score near zero even if skills match",
@@ -176,7 +195,8 @@ nothing else from the conversation. So:
 }
 ```
 
-**Severity** (applies to `anti_criteria` and `hard_filters.other`): a plain
+**Severity** (applies to `anti_criteria` and `hard_filters.other`; mind the
+direction of each list, described under "Writing criteria" below): a plain
 string is a *dealbreaker*. The gate vetoes any job that clearly matches it. Use
 `{"text": "...", "severity": "penalty"}` for things that count against a job
 but that the applicant would still sometimes take (e.g. "prefers ≤4 years

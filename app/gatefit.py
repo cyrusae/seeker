@@ -306,8 +306,24 @@ def _preview(rows, cand, cur, current, thresholds, weights, applicant_bias) -> d
                                     or c["kept"] / max(kept_n[aid], 1)
                                     >= c["rejected"] / max(rej_n[aid], 1))]
     flags.sort(key=lambda f: -f["kept"])
+
+    # Exclusions that apply to most jobs (any severity): almost always an
+    # item worded the wrong way round or filed in the wrong list.
+    hit: dict = defaultdict(int)
+    seen: dict = defaultdict(int)
+    for x in rows:
+        aid = x["job"]["applicant_id"]
+        seen[aid] += 1
+        for q, mt in x["ev"]["meta"].items():
+            if gate.broad_candidate(mt) and \
+                    float(x["ev"]["answers"].get(q, {}).get("noul", 0)) >= 0.5:
+                hit[(aid, mt["kind"], mt["label"])] += 1
+    broad = [{"applicant": aid, "kind": kind, "item": label, "share": pct(n, seen[aid])}
+             for (aid, kind, label), n in hit.items()
+             if seen[aid] >= gate.BROAD_MIN_JOBS and n / seen[aid] > gate.BROAD_SHARE]
+    broad.sort(key=lambda f: -(f["share"] or 0))
     return {"table": table, "moves": dict(moves), "n_unreviewed_scored": len(live),
-            "dealbreaker_flags": flags}
+            "dealbreaker_flags": flags, "broad_flags": broad}
 
 
 def _warnings(rows, stats, current) -> list[str]:
@@ -330,6 +346,10 @@ def _warnings(rows, stats, current) -> list[str]:
     for k, v in stats.get("held_features", {}).items():
         out.append(f"Too few decisions involve '{k}' to learn its weight, so it's held "
                    f"at {v:+.2f} (from the current or default model) rather than fit.")
+    for b in stats.get("broad_flags", []):
+        out.append(f"{b['applicant']}: “{b['item'][:80]}” applies to {b['share']}% of decided "
+                   "jobs. An exclusion that broad is usually worded the wrong way round "
+                   "or in the wrong list (see Gate lab → Criteria).")
     if stats["veto_loss"]:
         out.append(f"{stats['veto_loss']} of {stats['n_pos']} kept jobs "
                    f"({100 * stats['veto_loss'] / max(stats['n_pos'], 1):.0f}%) are vetoed by a "

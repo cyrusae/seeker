@@ -15,7 +15,8 @@
 </form>
 <p class="meta">Profile v{{ version }} · {{ n_jobs }} jobs with answers under it ({{ groups.kept }} kept, {{ groups.rejected }} rejected,
   {{ groups.other }} other). Dealbreakers veto at 0.80; lower the threshold to see near misses.
-  ⚑ = a dealbreaker that fires on 5%+ of kept jobs, or at least as often on kept jobs as on rejected ones.</p>
+  ⚑ = a dealbreaker that fires on 5%+ of kept jobs, or at least as often on kept jobs as on rejected ones.
+  ⚠ = an exclusion that applies to most jobs (p ≥ 0.5 on over half), almost always an item worded the wrong way round or in the wrong list.</p>
 
 {% if item %}
 <div class="card">
@@ -42,7 +43,11 @@
     <td>{{ r.kept }} <span class="meta">({{ '%.0f' % (r.kept_rate * 100) }}%)</span>{% if r.flag %} <span style="color: var(--warn);">⚑</span>{% endif %}</td>
     <td>{{ r.rejected }} <span class="meta">({{ '%.0f' % (r.rejected_rate * 100) }}%)</span></td>
     <td>{{ r.other }}</td>
-    <td><a href="/gate/criteria?applicant={{ applicant }}&t={{ threshold }}&item={{ r.qid }}">{{ r.label }}</a></td>
+    <td><a href="/gate/criteria?applicant={{ applicant }}&t={{ threshold }}&item={{ r.qid }}">{{ r.label }}</a>
+      {% if r.broad %}<br><span style="color: var(--bad);">⚠ applies to {{ '%.0f' % (r.applies_share * 100) }}% of all jobs.
+        {% if r.kind == 'hard' %}Items in hard_filters.other must be worded as requirements (“No Sunday work”);
+        this one may describe the job to avoid instead, which inverts it: move it to anti_criteria.
+        {% else %}An exclusion this broad is probably worded too generally.{% endif %}</span>{% endif %}</td>
   </tr>
   {% endfor %}
 </table>

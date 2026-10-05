@@ -347,6 +347,24 @@ def evaluate(job, profile: dict, profile_version: int | None = None,
 SENIORITY_VALUE = [0.0, 0.5, 1.0, 0.7]  # far above, stretch, fits, overqualified
 SCAM_LABELS = ["none", "low", "medium", "high"]
 VETO_P = 0.8
+# A hard filter or anti-criterion that applies (p >= 0.5) to more than this
+# share of all scored jobs is almost certainly worded the wrong way round or
+# filed in the wrong list (hard_filters.other items are requirements the job
+# must meet; anti_criteria items describe jobs to rule out). Real exclusions
+# apply to a minority of postings.
+BROAD_SHARE = 0.5
+BROAD_MIN_JOBS = 5
+
+
+def broad_candidate(meta_item: dict) -> bool:
+    """Items the "applies to most jobs" check covers: anything in
+    hard_filters.other (requirements; broad = likely inverted) and
+    anti-criteria dealbreakers. A broad *penalty* anti-criterion is
+    legitimate ("requires more than 3 years" applies to most postings and
+    should just count against them)."""
+    if meta_item["kind"] == "hard":
+        return True
+    return meta_item["kind"] == "anti" and (meta_item.get("severity") or "dealbreaker") == "dealbreaker"
 VETO_CAP = 2.0
 FIT_FEATURES = ["role", "qualified", "seniority", "soft", "penalty", "thin"]
 
