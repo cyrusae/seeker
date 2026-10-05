@@ -54,6 +54,7 @@ def _days_ago(ts: str | None) -> int | None:
 
 templates.env.filters["days_ago"] = _days_ago
 templates.env.filters["gate_info"] = lambda j: _gate_info(j)
+templates.env.filters["deadline_passed"] = lambda j: _deadline_passed(j)
 
 
 _THRESH_CACHE: dict = {"at": 0.0, "t": None}
@@ -119,7 +120,11 @@ def _gate_info(j) -> dict:
 
 
 def _deadline_passed(j) -> bool:
-    """The Jev gate read a stated application deadline that's already past."""
+    """The Jev gate read a stated application deadline that's already past —
+    unless you've said the job is still open (closure_dismissed), e.g. a soft
+    deadline, or a date Jev misread."""
+    if j["closure_dismissed"]:
+        return False
     return _gate_info(j).get("deadline_passed", 0) >= 0.8
 
 
@@ -238,8 +243,41 @@ def _remember_applicant(request: Request, resp, applicant: str):
 REVIEW_SORTS = {"fit": "best fit first", "newest": "newest first", "oldest": "oldest first"}
 
 
+_RESCORE_CACHE: dict = {"at": 0.0, "v": {}}
+
+
+def _rescore_counts_cached() -> dict:
+    """The preview counts scan ~25k rows; refresh at most every 5 minutes."""
+    import time as _t
+    if _t.time() - _RESCORE_CACHE["at"] > 300:
+        with db.connect() as conn:
+            _RESCORE_CACHE.update(at=_t.time(), v=_rescore_counts(conn))
+    return _RESCORE_CACHE["v"]
+
+
+RESCORE_WINDOWS = (7, 14, 30, 0)  # days since last listed; 0 = no limit
+
+
+def _rescore_counts(conn) -> dict:
+    """{applicant: {"queue": n, "skipped": {window: n}, "filtered": {...}}} for
+    the re-score preview. Windows count jobs a source listed recently, so a
+    re-score doesn't spend money on postings that have long since closed."""
+    out: dict = {}
+    for r in conn.execute("SELECT applicant_id a, COUNT(*) n FROM jobs WHERE "
+                          "status='pending_user_review' GROUP BY 1"):
+        out.setdefault(r["a"], {"queue": 0, "skipped": {}, "filtered": {}})["queue"] = r["n"]
+    for st in ("skipped", "filtered"):
+        for w in RESCORE_WINDOWS:
+            cond = "" if not w else \
+                f" AND COALESCE(last_seen_at, created_at) >= datetime('now', '-{w} days')"
+            for r in conn.execute(f"SELECT applicant_id a, COUNT(*) n FROM jobs "
+                                  f"WHERE status='{st}'{cond} GROUP BY 1"):
+                out.setdefault(r["a"], {"queue": 0, "skipped": {}, "filtered": {}})[st][str(w)] = r["n"]
+    return out
+
+
 @app.get("/")
-def review(request: Request, applicant: str = "", view: str = "", sort: str = "fit"):
+def review(request: Request, applicant: str = "", view: str = "", sort: str = "fit", msg: str = ""):
     applicant = _sticky_applicant(request, applicant)
     with db.connect() as conn:
         # self-join pulls the near-duplicate's title/status for the ⚠ line
@@ -292,7 +330,9 @@ def review(request: Request, applicant: str = "", view: str = "", sort: str = "f
         "sections": sections, "view": view, "stale_count": len(buckets["stale"]),
         "sort": sort, "sorts": REVIEW_SORTS, "show_gate": _show_gate(request),
         "live_count": len(buckets["recent"]) + len(buckets["aging"]),
-        "counts": counts, "applicants": names, "selected": applicant,
+        "counts": counts, "applicants": names, "selected": applicant, "msg": msg,
+        "rescore_counts": _rescore_counts_cached(), "rescore_max": settings.rescore_max,
+        "rescore_cost": settings.rescore_cost_per_job, "rescore_windows": RESCORE_WINDOWS,
     })
     return _remember_applicant(request, resp, applicant)
 
@@ -637,31 +677,52 @@ def mark_applied(job_id: str, redirect: str = Form("/"), note: str = Form("")):
 
 @app.post("/rescore")
 def rescore(background: BackgroundTasks, applicant: str = Form(""),
-            include_skipped: str = Form(""), include_filtered: str = Form("")):
+            include_skipped: str = Form(""), include_filtered: str = Form(""),
+            window: int = Form(14)):
     """Throw unreviewed jobs back to the eval queue — for after a profile
     re-import. Reviewed/drafted jobs are never touched. Optionally includes
     auto-skipped jobs (their skip was decided under the old profile) and
     keyword-filtered jobs (whose title_exclude may have changed). Re-queuing
     filtered jobs is cheap: the keyword gate re-runs before any LLM call, so
     still-excluded titles bounce straight back at zero token cost."""
-    included = ["pending_user_review"]
-    if include_skipped:
-        included.append("skipped")
-    if include_filtered:
-        included.append("filtered")
-    statuses = "(" + ",".join(f"'{s}'" for s in included) + ")"
-    q = ("UPDATE jobs SET status='pending_eval', error=NULL, score=NULL, pitch=NULL, "
-         "concerns=NULL, scam_risk=NULL, eval_json=NULL, escalated=0 "
-         f"WHERE status IN {statuses}")
-    args = []
-    if applicant:
-        q += " AND applicant_id=?"
-        args.append(applicant)
+    # Guards: skipped/filtered jobs only within `window` days of a source last
+    # listing them (0 = no limit), and at most RESCORE_MAX jobs per click,
+    # most recently listed first. Without these, "include auto-skipped"
+    # re-evaluated every skipped job ever (~4,000 per applicant, ~$5, hours).
+    window = window if window in RESCORE_WINDOWS else 14
+    extra = [s for s, on in (("skipped", include_skipped), ("filtered", include_filtered)) if on]
+    who, args = ("", []) if not applicant else (" AND applicant_id=?", [applicant])
     with db.connect() as conn:
-        conn.execute(q, args)
+        queue = [r["id"] for r in conn.execute(
+            f"SELECT id FROM jobs WHERE status='pending_user_review'{who}", args)]
+        more = []
+        if extra:
+            marks = ",".join("?" * len(extra))
+            cond = "" if not window else \
+                f" AND COALESCE(last_seen_at, created_at) >= datetime('now', '-{window} days')"
+            more = [r["id"] for r in conn.execute(
+                f"SELECT id FROM jobs WHERE status IN ({marks}){cond}{who} "
+                "ORDER BY COALESCE(last_seen_at, created_at) DESC", [*extra, *args])]
+        room = max(settings.rescore_max - len(queue), 0)
+        capped = len(more) > room
+        ids = queue + more[:room]
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            conn.execute(
+                "UPDATE jobs SET status='pending_eval', error=NULL, score=NULL, pitch=NULL, "
+                "concerns=NULL, scam_risk=NULL, eval_json=NULL, escalated=0 "
+                f"WHERE id IN ({','.join('?' * len(chunk))}) "
+                "AND status IN ('pending_user_review','skipped','filtered')", chunk)
+    _RESCORE_CACHE["at"] = 0.0
     pipeline.clear_stop()  # explicit re-score overrides a prior stop
     background.add_task(pipeline.evaluate_pending)
-    return RedirectResponse(f"/?applicant={applicant}", status_code=303)
+    msg = (f"Re-queued {len(ids)} jobs for {applicant or 'everyone'} "
+           f"({len(queue)} from the review queue, {len(ids) - len(queue)} skipped/filtered"
+           f"{f' seen in the last {window} days' if extra and window else ''})"
+           f"{f'; capped at {settings.rescore_max}, most recently listed first' if capped else ''}. "
+           f"Evaluating in the background; up to ~${len(ids) * settings.rescore_cost_per_job:.2f}.")
+    from urllib.parse import quote
+    return RedirectResponse(f"/?applicant={applicant}&msg={quote(msg)}", status_code=303)
 
 
 @app.post("/jobs/{job_id}/retry")

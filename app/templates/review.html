@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+{% if msg %}<p class="msg">{{ msg }}</p>{% endif %}
 {% set back = '/?view=' ~ view ~ '&sort=' ~ sort %}
 <form method="get" action="/" style="max-width: 16rem;">
   <label>Applicant:
@@ -38,7 +39,7 @@
 <details style="margin-bottom: 0.8rem;">
   <summary class="meta" style="cursor: pointer;">re-score against updated profiles…</summary>
   <form method="post" action="/rescore" style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-top: 0.4rem;"
-        onsubmit="return confirm('Re-score unreviewed jobs for ' + (event.submitter.value || 'everyone') + ' against their current profile? This re-runs evals (costs tokens).')">
+        onsubmit="return confirmRescore(event)">
     {% if selected %}
     <button class="subtle" name="applicant" value="{{ selected }}">Re-score {{ selected }}</button>
     {% else %}
@@ -47,11 +48,48 @@
     {% endfor %}
     <button class="subtle" name="applicant" value="">Re-score everyone</button>
     {% endif %}
-    <label style="font-weight: 400;"><input type="checkbox" name="include_skipped" value="1">
+    <label style="font-weight: 400;"><input type="checkbox" name="include_skipped" value="1" onchange="rescorePreview()">
       include auto-skipped</label>
-    <label style="font-weight: 400;"><input type="checkbox" name="include_filtered" value="1">
+    <label style="font-weight: 400;"><input type="checkbox" name="include_filtered" value="1" onchange="rescorePreview()">
       include keyword-filtered</label>
+    <label style="font-weight: 400;">listed in the last
+      <select name="window" onchange="rescorePreview()">
+        {% for w in rescore_windows %}<option value="{{ w }}" {% if w == 14 %}selected{% endif %}>{{ '%d days' % w if w else 'any time' }}</option>{% endfor %}
+      </select></label>
   </form>
+  <p class="meta" id="rescore-preview"></p>
+  <script>
+  const RESCORE = {{ rescore_counts | tojson }}, RESCORE_MAX = {{ rescore_max }}, RESCORE_COST = {{ rescore_cost }};
+  function rescoreNumbers(who) {
+    const f = document.querySelector('form[action="/rescore"]');
+    const w = f.window.value, apps = who ? [who] : Object.keys(RESCORE);
+    let q = 0, s = 0, fl = 0;
+    for (const a of apps) {
+      const c = RESCORE[a] || {queue: 0, skipped: {}, filtered: {}};
+      q += c.queue || 0;
+      if (f.include_skipped.checked) s += c.skipped[w] || 0;
+      if (f.include_filtered.checked) fl += c.filtered[w] || 0;
+    }
+    const total = Math.min(q + s + fl, RESCORE_MAX);
+    return {q, s, fl, total, capped: q + s + fl > RESCORE_MAX, cost: total * RESCORE_COST};
+  }
+  function describe(n, who) {
+    return `${who || 'everyone'}: ${n.q} in the review queue` +
+      (n.s ? ` + ${n.s} skipped` : '') + (n.fl ? ` + ${n.fl} keyword-filtered (most bounce off the title filter for free)` : '') +
+      (n.capped ? `; capped at ${RESCORE_MAX}, most recently listed first` : '') +
+      ` → up to ${n.total} evaluations, ~$${n.cost.toFixed(2)}, run one at a time in the background.`;
+  }
+  function rescorePreview() {
+    const who = {{ (selected or '') | tojson }};
+    document.getElementById('rescore-preview').textContent = 'Would re-evaluate ' + describe(rescoreNumbers(who), who);
+  }
+  function confirmRescore(ev) {
+    const who = ev.submitter ? ev.submitter.value : '';
+    return confirm('Re-score against current profiles?\n\n' + describe(rescoreNumbers(who), who) +
+                   '\n\nCurrent scores for these jobs are cleared and recomputed.');
+  }
+  rescorePreview();
+  </script>
 </details>
 {% endif %}
 
@@ -74,7 +112,7 @@
   <span class="score {{ 'score-hi' if s >= 75 else 'score-mid' if s >= 55 else 'score-lo' }}">{{ s }}</span>
   {% set reasons = {'absent': 'no longer listed on its job board', '404': 'posting URL returns 404 (removed)', '410': 'posting URL returns 410 (removed)', 'expired-text': 'the posting page says it is closed/filled', 'manual': 'you marked this posting gone'} %}
   <h3>{{ j['title'] }} — {{ j['company'] or '?' }}
-    {% if (j | gate_info).get('deadline_passed', 0) >= 0.8 %}<span title="the posting states an application deadline that has passed" style="font-size: 0.7em; font-weight: 600; color: #c0392b; border: 1px solid currentColor; border-radius: 3px; padding: 0 0.3em; vertical-align: middle;">⏰ deadline passed</span> {% endif %}{% if j['closed_at'] %}<span title="likely closed — {{ reasons.get(j['closed_reason'], 'no longer available') }} (as of {{ j['closed_at'] }})" style="font-size: 0.7em; font-weight: 600; color: #c0392b; border: 1px solid currentColor; border-radius: 3px; padding: 0 0.3em; vertical-align: middle;">✖ likely closed</span>{% endif %}
+    {% if j | deadline_passed %}<a href="/gate/job/{{ j['id'] }}#q-deadline_passed" title="Jev read a stated application deadline that has passed. Click to see its answer; 'find evidence' there shows the line it read the deadline from." style="font-size: 0.7em; font-weight: 600; color: #c0392b; border: 1px solid currentColor; border-radius: 3px; padding: 0 0.3em; vertical-align: middle; text-decoration: none;">⏰ deadline passed</a> {% endif %}{% if j['closed_at'] %}<span title="likely closed — {{ reasons.get(j['closed_reason'], 'no longer available') }} (as of {{ j['closed_at'] }})" style="font-size: 0.7em; font-weight: 600; color: #c0392b; border: 1px solid currentColor; border-radius: 3px; padding: 0 0.3em; vertical-align: middle;">✖ likely closed</span>{% endif %}
   </h3>
   <div class="meta">
     {{ j['applicant_id'] }} · {{ j['location'] or '?' }}
@@ -156,10 +194,10 @@
       <input type="hidden" name="redirect" value="{{ back }}">
       <button class="subtle" title="fresh eval against the current profile; re-fetches thin postings">re-evaluate</button>
     </form>
-    {% if j['closed_at'] %}
+    {% if j['closed_at'] or (j | deadline_passed) %}
     <form method="post" action="/jobs/{{ j['id'] }}/unflag">
       <input type="hidden" name="redirect" value="{{ back }}">
-      <button class="subtle" title="the posting is actually still open — clears the flag, counts as a fresh sighting, and stops auto-flagging this job">↺ Not closed</button>
+      <button class="subtle" title="the posting is actually still open (e.g. a soft deadline) — clears the flag, counts as a fresh sighting, and stops auto-flagging this job">↺ {{ 'Not closed' if j['closed_at'] else 'Still open' }}</button>
     </form>
     <form method="post" action="/jobs/{{ j['id'] }}/stale">
       <input type="hidden" name="redirect" value="{{ back }}">

@@ -73,6 +73,11 @@ class Settings:
     # Random below-the-floor jobs surfaced per applicant per cycle, so your
     # decisions don't only ever cover jobs the scorer already liked.
     spot_checks_per_run: int = int(_env("SPOT_CHECKS_PER_RUN", "3"))
+    # Re-score guard: at most this many jobs per click (most recently listed
+    # first), and the estimate shown before confirming uses this $/job
+    # (DeepSeek eval + escalation share + Jev shadow, Oct 2026 averages).
+    rescore_max: int = int(_env("RESCORE_MAX", "500"))
+    rescore_cost_per_job: float = float(_env("RESCORE_COST_PER_JOB", "0.0014"))
     # Review-queue freshness. A job counts as "seen recently" if a source
     # listed it (or its direct URL checked out) within RECENT_SEEN_DAYS;
     # unseen for STALE_AFTER_DAYS or more, it moves to the stale view.
