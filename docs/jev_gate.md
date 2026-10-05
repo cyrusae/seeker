@@ -23,9 +23,9 @@ explaining the project to someone else), see
 | `GATE_MODE=shadow`: new jobs get a Jev score next to DeepSeek's | **On** (DeepSeek still decides) |
 | Spot checks (3 random skipped jobs/applicant/cycle) | **On** |
 | Cyrus profile | **v14** (2026-10-02): v13 + the domain-expertise item changed from dealbreaker to penalty. Reports for v12→v13 and v13→v14 are saved in Gate lab → Profile changes |
-| Gate model in use | **v10** (fit on v14 answers, 1,262 decisions): gloss ≥ 38.5, review ≥ 23.3; penalty weight −0.57; 12 of 181 kept jobs vetoed (4 of Cyrus's) |
+| Gate model in use | **v13** (2026-10-05, 1,299 decisions): gloss ≥ 37.1, review ≥ 24.1; dealbreaker close calls (p 0.5–0.8) now count as penalties; 8 of 188 kept jobs vetoed. Fair comparison: Cyrus Jev 0.775 vs DeepSeek 0.707 |
 | Shadow scores | Current for all jobs with answers under the current profiles (~1,630 jobs). Status → Backfill refreshes after any profile change |
-| Martin profile | **v11** (2026-10-05). v10 was his full review; v11 fixed four v10 exclusions filed under `hard_filters.other`, which inverted them (per diem applied to 82% of jobs → 0%). His decided jobs don't have answers under v11 yet, so **refit with "first ask Jev" ticked** before judging the gate on his numbers |
+| Martin profile | **v11** (2026-10-05), refit done. Fair comparison now Jev **0.746** vs DeepSeek 0.793 (was 0.594 vs 0.771 on v9). Still behind DeepSeek, but the gap is down from 0.18 to 0.05. The agency postings he keeps rejecting score ~4 in the gate; they reach him because DeepSeek decides his queue |
 | Live mode (gate decides status, gloss step, gloss-on-open) | **Not built** |
 
 ## Next steps
@@ -124,6 +124,13 @@ plus a ~300-job sample of auto-skipped jobs and the 466-job backlog.
   threshold, the card shows a code-written "why" plus a "write gloss" button.
   If you click it on most cards, lower the threshold to the review floor.
   Gloss the whole backlog up front when live mode lands.
+- **Dealbreaker close calls count as penalties** (p 0.5–0.8 feeds the penalty
+  feature). A probable dealbreaker used to add nothing to the score.
+- **No "strong penalty" tier (for now).** Considered for "only if it's
+  really, really good" items (Martin's 8 AM start), with a fixed weight
+  around −1.2 to −2.0. Not built: on the data, the agency postings it was
+  meant for already score ~4, and −2.0 felt too strong. Revisit if a
+  penalty item keeps letting through jobs that should have dropped.
 - **Dealbreakers are declared, not learned.** Rare dealbreakers (crypto,
   clearance) almost never appear in your decisions, so no fit can learn them.
   A dealbreaker answered at p ≥ 0.8 (or a clear scam rating) vetoes the job.
