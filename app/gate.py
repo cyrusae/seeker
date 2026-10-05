@@ -347,6 +347,7 @@ def evaluate(job, profile: dict, profile_version: int | None = None,
 SENIORITY_VALUE = [0.0, 0.5, 1.0, 0.7]  # far above, stretch, fits, overqualified
 SCAM_LABELS = ["none", "low", "medium", "high"]
 VETO_P = 0.8
+CLOSE_CALL_P = 0.5  # dealbreakers answered in [CLOSE_CALL_P, VETO_P) count as penalties
 # A hard filter or anti-criterion that applies (p >= 0.5) to more than this
 # share of all scored jobs is almost certainly worded the wrong way round or
 # filed in the wrong list (hard_filters.other items are requirements the job
@@ -413,15 +414,20 @@ def features(answers: dict, meta: dict) -> dict:
     soft = _nouls(answers, meta, ("soft",))
     sw = [(meta[q]["weight"] or 2.0, p) for q, p in soft]
     pen = _nouls(answers, meta, ("hard", "anti"), "penalty")
+    # Dealbreaker close calls: answered 0.5-0.8, i.e. probably true but not
+    # sure enough to veto. They used to count for nothing at all; a probable
+    # dealbreaker should at least count against the job like a penalty.
+    close = [(q, p) for q, p in _nouls(answers, meta, ("hard", "anti"), "dealbreaker")
+             if CLOSE_CALL_P <= p < VETO_P]
     none_fire = 1.0
-    for _, p in pen:
+    for _, p in pen + close:
         none_fire *= 1 - p
     return {
         "role": _norm_score(answers["role"]),
         "qualified": _norm_score(answers["qualified"]),
         "seniority": _expect(answers["seniority"], SENIORITY_VALUE),
         "soft": (sum(w * p for w, p in sw) / sum(w for w, _ in sw)) if sw else 0.5,
-        "penalty": 1 - none_fire,  # P(at least one penalty item applies)
+        "penalty": 1 - none_fire,  # P(at least one penalty item, or dealbreaker close call, applies)
         "thin": float(answers["thin"]["noul"]),
     }
 

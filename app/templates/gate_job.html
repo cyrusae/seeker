@@ -49,7 +49,8 @@
     {% if x.vetoes %}<tr><td colspan="3" style="color: var(--bad);">veto: capped at 2</td><td style="text-align: right;"><strong>{{ x.score }}</strong></td></tr>{% endif %}
   </table>
   <p class="meta">Thresholds: review ≥ {{ x.thresholds.review_min }}, gloss ≥ {{ x.thresholds.gloss_min }}.
-    Dealbreakers veto at p ≥ 0.80; penalties and preferences count from 0.50.</p>
+    Dealbreakers veto at p ≥ 0.80; between 0.50 and 0.80 (“close call”) they count as penalties.
+    Penalties and preferences count from 0.50.</p>
 </div>
 
 <h3>Every question</h3>

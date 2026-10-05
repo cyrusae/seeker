@@ -26,7 +26,8 @@ from .gatefit import POSITIVE, auc, closure_note, fit_logistic
 
 FEATURE_LABELS = {
     "role": "role match", "qualified": "meets requirements", "seniority": "seniority fit",
-    "soft": "preferences (weighted average)", "penalty": "penalty items (chance any applies)",
+    "soft": "preferences (weighted average)",
+    "penalty": "penalties + dealbreaker close calls (chance any applies)",
     "thin": "thin posting",
 }
 SOFT_HIT = 0.5      # a preference / penalty "counts" from here
@@ -201,7 +202,7 @@ def explain(answers: dict, meta: dict, model: dict, applicant_id: str) -> dict:
             hits = [x["label"] for x in qrows if x["kind"] == "soft" and x.get("status")]
             return f"{r['label']} {r['value']:.2f}" + (f": {len(hits)} matched" if hits else "")
         if k == "penalty":
-            hits = [x["label"] for x in qrows if x.get("status") == "counts"]
+            hits = [x["label"] for x in qrows if x.get("status") in ("counts", "close call")]
             return f"{r['label']}: " + ("; ".join(hits) if hits else f"{r['value']:.2f}")
         return f"{r['label']} ({r['value']:.0%})"
     lifts = [describe(r) for r in reversed(contrib) if r["contrib"] > 0.15][:2]
